@@ -21,14 +21,17 @@ export function decideBotAction(
   }
 
   const bot = state.players[idx];
+  if (state.stage === 'flop_discard') {
+    return { action: 'discard', amount: Math.max(0, bot.holeCards.length - 1) };
+  }
   const canCheck = state.currentBet <= bot.bet;
   const callAmt = Math.min(state.currentBet - bot.bet, bot.chips);
   const potOdds = callAmt / (state.pot + callAmt);
 
   // Evaluate hand strength
   const allCards = [...bot.holeCards, ...state.communityCards];
-  const handResult = evaluateHand(allCards);
-  const strength = handResult.rank; // 0-9
+  const handResult = allCards.length >= 5 ? evaluateHand(allCards, state.gameType ?? 'short_deck') : null;
+  const strength = handResult?.rank ?? estimatePreflopStrength(bot.holeCards); // 0-9
 
   // Normalize to 0-1 scale (max rank is 9)
   const normalizedStrength = strength / 9;
@@ -51,10 +54,10 @@ export function decideBotAction(
 
   // Pre-flop hole card assessment (if no community cards yet)
   let preflopBonus = 0;
-  if (state.stage === 'preflop' && allCards.length === 2) {
-    const r1 = allCards[0].rank;
-    const r2 = allCards[1].rank;
-    const suited = allCards[0].suit === allCards[1].suit;
+  if (state.stage === 'preflop' && bot.holeCards.length >= 2) {
+    const r1 = bot.holeCards[0].rank;
+    const r2 = bot.holeCards[1].rank;
+    const suited = bot.holeCards[0].suit === bot.holeCards[1].suit;
     const isPair = r1 === r2;
     const hasAce = r1 === 'A' || r2 === 'A';
     const hasKing = r1 === 'K' || r2 === 'K';
@@ -112,6 +115,25 @@ export function decideBotAction(
   return { action: 'fold' };
 }
 
+function estimatePreflopStrength(holeCards: Array<{ rank: string; suit: string }>): number {
+  if (holeCards.length < 2) return HAND_RANK.HIGH_CARD;
+  const vals = holeCards.map((c) => {
+    if (c.rank === 'A') return 14;
+    if (c.rank === 'K') return 13;
+    if (c.rank === 'Q') return 12;
+    if (c.rank === 'J') return 11;
+    if (c.rank === 'T') return 10;
+    return Number(c.rank);
+  }).sort((a, b) => b - a);
+  const counts = new Map<number, number>();
+  vals.forEach((v) => counts.set(v, (counts.get(v) || 0) + 1));
+  const maxCount = Math.max(...Array.from(counts.values()));
+  if (maxCount >= 3) return HAND_RANK.THREE_OF_A_KIND;
+  if (maxCount === 2) return HAND_RANK.ONE_PAIR + 1;
+  if (vals[0] >= 14 && vals[1] >= 12) return HAND_RANK.ONE_PAIR;
+  return HAND_RANK.HIGH_CARD;
+}
+
 function makeBet(chips: number, pot: number, strength: number): BotDecision {
   const betSize = Math.floor(pot * (0.5 + strength * 0.5));
   const amount = Math.min(betSize, chips);
@@ -142,6 +164,7 @@ export function getBotThinkTime(action: ActionType): number {
     call: 700,
     raise: 1200,
     allin: 900,
+    discard: 450,
   };
   const variance = Math.random() * 800;
   return (base[action] || 800) + variance;

@@ -14,6 +14,7 @@ create table if not exists rooms (
   host_id       text not null,             -- socket/player id of host
   status        text not null default 'waiting',  -- waiting | playing | finished
   settings      jsonb not null default '{
+    "gameType": "short_deck",
     "startingChips": 5000,
     "smallBlind": 50,
     "bigBlind": 100,

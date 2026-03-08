@@ -28,16 +28,48 @@ export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLea
     setTimeout(() => setCopied(false), 2000);
   }
 
+  const normalizedGameType = room.settings.gameType === 'regular' || room.settings.gameType === 'short_deck' || room.settings.gameType === 'omaha' || room.settings.gameType === 'crazy_pineapple'
+    ? room.settings.gameType
+    : 'short_deck';
+  const gameLabel = normalizedGameType === 'short_deck'
+    ? '短牌德州'
+    : normalizedGameType === 'regular'
+      ? '常规德州'
+      : normalizedGameType === 'omaha'
+        ? '奥马哈'
+        : 'Crazy Pineapple';
+  const waitingBg = normalizedGameType === 'short_deck'
+    ? 'radial-gradient(ellipse at center, #1a4a2e 0%, #0a1f12 100%)'
+    : normalizedGameType === 'regular'
+      ? 'radial-gradient(ellipse at center, #132651 0%, #070c1a 100%)'
+      : normalizedGameType === 'omaha'
+        ? 'radial-gradient(ellipse at center, #4f2a11 0%, #140903 100%)'
+        : 'radial-gradient(ellipse at center, #3f0f2f 0%, #14060f 100%)';
+  const panelClass = normalizedGameType === 'short_deck'
+    ? 'bg-white/5 border border-gold/20'
+    : normalizedGameType === 'regular'
+      ? 'bg-sky-950/25 border border-sky-300/30'
+      : normalizedGameType === 'omaha'
+        ? 'bg-amber-950/20 border border-amber-200/30'
+        : 'bg-fuchsia-950/20 border border-fuchsia-200/30';
+  const badgeClass = normalizedGameType === 'short_deck'
+    ? 'bg-gradient-to-r from-gold-dark to-gold text-black'
+    : normalizedGameType === 'regular'
+      ? 'bg-gradient-to-r from-sky-200 to-cyan-100 text-sky-900'
+      : normalizedGameType === 'omaha'
+        ? 'bg-gradient-to-r from-amber-200 to-yellow-100 text-amber-900'
+        : 'bg-gradient-to-r from-fuchsia-200 to-pink-100 text-fuchsia-900';
+
   return (
     <div
       className="min-h-screen flex items-center justify-center p-4"
-      style={{ background: 'radial-gradient(ellipse at center, #1a4a2e 0%, #0a1f12 100%)' }}
+      style={{ background: waitingBg }}
     >
-      <div className="w-full max-w-lg bg-white/5 border border-gold/20 rounded-2xl p-8 backdrop-blur-sm">
+      <div className={clsx('w-full max-w-lg rounded-2xl p-8 backdrop-blur-sm', panelClass)}>
         {/* Header */}
         <div className="text-center mb-6">
-          <span className="inline-block bg-gradient-to-r from-gold-dark to-gold text-black text-xs font-bold px-3 py-1 rounded-full mb-3">
-            短牌德州
+          <span className={clsx('inline-block text-xs font-bold px-3 py-1 rounded-full mb-3', badgeClass)}>
+            {gameLabel}
           </span>
           <h1 className="font-display text-4xl text-gold tracking-widest">等待玩家加入</h1>
         </div>

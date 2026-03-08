@@ -1,5 +1,5 @@
 'use client';
-import { Card as CardType, PlayerState, Rank } from '../types/poker';
+import { Card as CardType, GameType, PlayerState, Rank } from '../types/poker';
 import Card from './Card';
 import clsx from 'clsx';
 
@@ -19,6 +19,7 @@ interface PlayerSeatProps {
   winsCount?: number;
   statusText?: string;
   showCheckBubble?: boolean;
+  gameType?: GameType;
 }
 
 function formatChips(n: number): string {
@@ -32,23 +33,26 @@ function cardKey(card?: CardType): string {
 
 export default function PlayerSeat({
   player, isDealer, isSmallBlind, isBigBlind,
-  isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false,
+  isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false, gameType = 'short_deck',
 }: PlayerSeatProps) {
+  const expectedHoleCount = gameType === 'omaha' ? 4 : 2;
   const showCards = isMe || (player.holeCards?.length ?? 0) > 0;
   const mask = player.revealedMask ?? 0;
-  let displayCards: Array<CardType | undefined>;
+  let displayCards: Array<CardType | undefined> = [];
   if (isMe) {
-    displayCards = [player.holeCards?.[0], player.holeCards?.[1]];
+    displayCards = [...(player.holeCards || [])];
+    if (displayCards.length === 0) displayCards = new Array(expectedHoleCount).fill(undefined);
   } else if (mask === 1) {
     displayCards = [player.holeCards?.[0], undefined];
   } else if (mask === 2) {
     displayCards = [undefined, player.holeCards?.[0]];
   } else if (mask === 3) {
-    displayCards = [player.holeCards?.[0], player.holeCards?.[1]];
+    displayCards = [...(player.holeCards || [])];
+    if (displayCards.length === 0) displayCards = new Array(expectedHoleCount).fill(undefined);
   } else {
-    displayCards = [undefined, undefined];
+    displayCards = new Array(expectedHoleCount).fill(undefined);
   }
-  const liveBest = isMe ? evaluateBestHandName([...player.holeCards, ...communityCards]) : '';
+  const liveBest = isMe ? evaluateBestHandName([...player.holeCards, ...communityCards], gameType) : '';
   const handLabel = player.handResult ? formatHandLabelEnDetailed(player.handResult) : liveBest;
   const runItTwiceLabels = player.runItTwiceHandNamesZh;
   const showPublicHandLabel = (player.revealedMask ?? 0) === 3;
@@ -58,13 +62,20 @@ export default function PlayerSeat({
   return (
     <div className={clsx('relative select-none', player.folded && 'opacity-45')}>
       <div className="flex items-end gap-2">
-        <div className="flex -space-x-2 mb-1">
+        <div
+          className={clsx(
+            'flex mb-1',
+            gameType === 'omaha'
+              ? (isMe ? 'gap-1.5 -space-x-0' : '-space-x-2')
+              : '-space-x-2'
+          )}
+        >
           {displayCards.map((card, i) => (
             <Card
               key={i}
               card={card}
               faceDown={!showCards || !card}
-              size="lg"
+              size={gameType === 'omaha' ? 'md' : 'lg'}
               index={i}
               className={clsx(
                 'rotate-[-4deg]',
@@ -213,18 +224,18 @@ function formatHandLabelEnDetailed(result: NonNullable<PlayerState['handResult']
   return `${valueToRank(hi)}-high`;
 }
 
-function evaluateBestHandName(cards: CardType[]): string {
+function evaluateBestHandName(cards: CardType[], gameType: GameType): string {
   if (cards.length < 5) return '';
   let bestRank = -1;
   for (const combo of combinations(cards, 5)) {
-    const r = evaluate5Rank(combo);
+    const r = evaluate5Rank(combo, gameType);
     if (r > bestRank) bestRank = r;
   }
   return HAND_NAMES[bestRank] || '';
 }
 
 const RANK_VALUES: Record<Rank, number> = {
-  '6': 6, '7': 7, '8': 8, '9': 9, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14,
+  '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14,
 };
 
 const HAND_NAMES: Record<number, string> = {
@@ -240,7 +251,7 @@ const HAND_NAMES: Record<number, string> = {
   0: 'HIGH CARD',
 };
 
-function evaluate5Rank(cards: CardType[]): number {
+function evaluate5Rank(cards: CardType[], gameType: GameType): number {
   const values = cards.map(c => RANK_VALUES[c.rank]);
   const suits = cards.map(c => c.suit);
   const counts = new Map<number, number>();
@@ -248,9 +259,11 @@ function evaluate5Rank(cards: CardType[]): number {
   const freq = Array.from(counts.values()).sort((a, b) => b - a);
   const isFlush = new Set(suits).size === 1;
   const unique = Array.from(new Set(values)).sort((a, b) => a - b);
-  const isWheel = [6, 7, 8, 9, 14].every(v => unique.includes(v));
+  const wheel = gameType === 'short_deck' ? [6, 7, 8, 9, 14] : [2, 3, 4, 5, 14];
+  const wheelHigh = gameType === 'short_deck' ? 9 : 5;
+  const isWheel = wheel.every(v => unique.includes(v));
   let isStraight = isWheel;
-  let high = isWheel ? 9 : 0;
+  let high = isWheel ? wheelHigh : 0;
   if (!isStraight) {
     for (let i = unique.length - 1; i >= 4; i--) {
       const top = unique[i];
@@ -263,8 +276,8 @@ function evaluate5Rank(cards: CardType[]): number {
   }
   if (isFlush && isStraight) return high === 14 ? 9 : 8;
   if (freq[0] === 4) return 7;
-  if (isFlush) return 6;
-  if (freq[0] === 3 && freq[1] === 2) return 5;
+  if (freq[0] === 3 && freq[1] === 2) return gameType === 'short_deck' ? 5 : 6;
+  if (isFlush) return gameType === 'short_deck' ? 6 : 5;
   if (freq[0] === 3) return 3;
   if (isStraight) return 4;
   if (freq[0] === 2 && freq[1] === 2) return 2;

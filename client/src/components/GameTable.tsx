@@ -77,6 +77,7 @@ function formatHandLabelEnDetailed(result?: { rank: number; name: string; tiebre
 
 function communityCountForStage(stage?: GameState['stage']): number {
   if (stage === 'flop') return 3;
+  if (stage === 'flop_discard') return 3;
   if (stage === 'turn') return 4;
   if (stage === 'river' || stage === 'showdown') return 5;
   return 0;
@@ -95,12 +96,13 @@ interface GameTableProps {
   onNextHand: () => void;
   onRevealCards: (count: 1 | 2) => void;
   onRunItTwiceVote: (agree: boolean) => void;
+  onEndSession: (rows: Array<{ id: string; name: string; buyIn: number; buyOut: number; net: number }>) => void;
   onLeave: () => void;
 }
 
 export default function GameTable({
   gameState, room, myPlayerId,
-  onAction, onSendChat, onSetAway, onJoinRequestDecision, onHostManagePlayer, onSetPause, onNextHand, onRevealCards, onRunItTwiceVote, onLeave
+  onAction, onSendChat, onSetAway, onJoinRequestDecision, onHostManagePlayer, onSetPause, onNextHand, onRevealCards, onRunItTwiceVote, onEndSession, onLeave
 }: GameTableProps) {
   const {
     chatMessages, joinRequests,
@@ -120,12 +122,14 @@ export default function GameTable({
   const [manageChips, setManageChips] = useState<string>('');
   const [managing, setManaging] = useState(false);
   const [checkBubblePlayers, setCheckBubblePlayers] = useState<Set<string>>(new Set());
+  const [showSessionLedger, setShowSessionLedger] = useState(false);
   const prevStageRef = useRef(gameState.stage);
   const prevHandRef = useRef(gameState.handNumber);
   const prevActionLenRef = useRef(gameState.actionLog.length);
 
   // Find my player
   const myPlayer = gameState.players.find(p => p.id === myPlayerId);
+  const isDiscardStage = gameState.stage === 'flop_discard' && (room.settings.gameType ?? 'short_deck') === 'crazy_pineapple';
   const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === myPlayerId;
   const canAct = isMyTurn && !myPlayer?.folded && !myPlayer?.allIn && gameState.stage !== 'showdown' && !isGamePaused;
 
@@ -152,24 +156,54 @@ export default function GameTable({
     Math.floor(gameState.currentBet + potAfterCall * fraction);
   const recentChat = chatMessages.slice(-3);
   const ownerName = room.players.find(p => p.id === room.hostId)?.name || 'HOST';
+  const gameTypeLabel = room.settings.gameType === 'regular'
+    ? "Texas Poker Hold'em"
+    : room.settings.gameType === 'omaha'
+      ? 'Omaha'
+      : room.settings.gameType === 'crazy_pineapple'
+        ? 'Crazy Pineapple'
+        : 'Short Deck';
   const meInRoom = room.players.find(p => p.id === myPlayerId);
   const isAway = !!meInRoom?.isAway;
+  const runItTwice = gameState.runItTwice;
   const winnerSource = (showHandResult ? handResult?.winners : undefined) || gameState.winners || [];
-  const winnerIds = new Set(winnerSource.map((w) => w.playerId));
+  const runWinnerIds = (() => {
+    const rs = runItTwice?.runResults || [];
+    const ids = new Set<string>();
+    for (const r of rs) {
+      for (const id of (r.playerIds || [])) ids.add(id);
+    }
+    return ids;
+  })();
+  const winnerIds = runWinnerIds.size > 0 ? runWinnerIds : new Set(winnerSource.map((w) => w.playerId));
   const winnerAmountById = new Map(winnerSource.map((w) => [w.playerId, w.chipsWon]));
   const isShowdownStage = gameState.stage === 'showdown';
   const showdownHighlightCardKeys = (() => {
     const set = new Set<string>();
+    const isRunItTwiceShowdown = runItTwice?.status === 'agreed' && !!runItTwice.runResults?.length;
     for (const p of gameState.players) {
       if (!winnerIds.has(p.id)) continue;
-      for (const c of (p.handResult?.cards || [])) set.add(cardKey(c));
+      if (isRunItTwiceShowdown) {
+        for (const c of (p.holeCards || [])) set.add(cardKey(c));
+      } else {
+        for (const c of (p.handResult?.cards || [])) set.add(cardKey(c));
+      }
     }
     return set;
   })();
   const isHost = room.hostId === myPlayerId;
+  const chipsByPlayerId = new Map(gameState.players.map((p) => [p.id, p.chips]));
+  const sessionLedgerRows = [...room.players]
+    .sort((a, b) => a.seatIndex - b.seatIndex)
+    .map((p) => {
+      const rebuyCount = rebuyCountByPlayerId[p.id] || 0;
+      const buyIn = room.settings.startingChips * (1 + rebuyCount);
+      const buyOut = chipsByPlayerId.get(p.id) ?? p.chips;
+      const net = buyOut - buyIn;
+      return { id: p.id, name: p.name, buyIn, buyOut, net };
+    });
   const manageTarget = manageTargetId ? room.players.find((p) => p.id === manageTargetId) : undefined;
   const myRevealMask = myPlayer?.revealedMask ?? 0;
-  const runItTwice = gameState.runItTwice;
   const myRunItTwiceVote = runItTwice?.votes?.[myPlayerId] ?? null;
   const showRunItTwicePanel = runItTwice?.status === 'pending' && myPlayerId in (runItTwice?.votes || {});
   const showdownPlayers = gameState.players.filter((p) => !p.folded && !!p.handResult);
@@ -274,6 +308,7 @@ export default function GameTable({
       }
 
       if (showHandResult || gameState.stage === 'showdown') return;
+      if (isDiscardStage) return;
 
       if (k === 'escape' && showRaisePanel) {
         e.preventDefault();
@@ -316,6 +351,7 @@ export default function GameTable({
     gameState.currentBet,
     gameState.bigBlind,
     gameState.stage,
+    isDiscardStage,
     showHandResult,
     showPrimaryAction,
     showRaisePanel,
@@ -451,9 +487,12 @@ export default function GameTable({
             height: `${100 / uiScale}%`,
           }}
         >
-        <div className="absolute top-3 right-24 z-30 text-right">
-          <div className="text-xs uppercase tracking-wide text-gray-400">Owner: wall</div>
-          <div className="mt-1 text-2xl font-bold leading-tight text-gray-300">NLH ~ 10 / 20</div>
+        <div className="absolute top-4 right-4 z-30 text-right pr-1">
+          <div className="inline-block rounded-md border border-white/20 bg-black/45 px-2 py-1 text-sm font-semibold tracking-wide text-amber-200">
+            {gameTypeLabel}
+          </div>
+          <div className="mt-1 text-sm font-semibold tracking-wide text-gray-300">Owner: {ownerName}</div>
+          <div className="mt-1 text-sm font-semibold tracking-wide text-gray-300">NLH ~ 10 / 20</div>
         </div>
 
         <button
@@ -479,18 +518,27 @@ export default function GameTable({
           />
         </aside>
 
-        <aside className="hidden md:flex absolute right-3 top-24 z-20 flex-col gap-2">
+        <aside className="hidden md:flex absolute right-3 top-36 z-20 flex-col gap-2">
           <SquareTool
             icon={soundMuted ? '🔇' : '🔊'}
+            label="SOUND"
             active={showSoundPanel}
             onClick={() => setShowSoundPanel(v => !v)}
           />
           <SquareTool
             icon={isGamePaused ? '▶' : '⏸'}
+            label="PAUSE"
             active={isGamePaused}
             onClick={() => onSetPause(!isGamePaused)}
           />
-          <SquareTool icon="■" />
+          <SquareTool
+            icon={isHost ? '■' : '📊'}
+            label={isHost ? 'END SESSION' : 'SESSION LEDGER'}
+            onClick={() => {
+              setShowSessionLedger(true);
+            }}
+            active={showSessionLedger}
+          />
         </aside>
 
         {showSoundPanel && (
@@ -540,7 +588,70 @@ export default function GameTable({
         )}
 
         {showRulesModal && (
-          <RulesModal onClose={() => setShowRulesModal(false)} />
+          <RulesModal
+            gameType={room.settings.gameType ?? 'short_deck'}
+            onClose={() => setShowRulesModal(false)}
+          />
+        )}
+        {showSessionLedger && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
+            <div className="w-[760px] max-w-[96vw] rounded-xl border border-white/20 bg-[#141821] text-white p-4 shadow-[0_20px_45px_rgba(0,0,0,0.5)]">
+              <div className="flex items-center justify-between">
+                <div className="text-xl font-bold">Session Ledger</div>
+                <button
+                  onClick={() => setShowSessionLedger(false)}
+                  className="px-2.5 py-1 rounded bg-white/15 hover:bg-white/25 text-sm"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="text-white/70 border-b border-white/15">
+                      <th className="text-left py-2 pr-3">Player</th>
+                      <th className="text-right py-2 pr-3">Buy-in</th>
+                      <th className="text-right py-2 pr-3">Buy-out</th>
+                      <th className="text-right py-2">Net</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sessionLedgerRows.map((row) => (
+                      <tr key={row.id} className="border-b border-white/10">
+                        <td className="py-2 pr-3">{row.name}</td>
+                        <td className="py-2 pr-3 text-right">{formatChips(row.buyIn)}</td>
+                        <td className="py-2 pr-3 text-right">{formatChips(row.buyOut)}</td>
+                        <td className={clsx('py-2 text-right font-semibold', row.net >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+                          {row.net >= 0 ? '+' : ''}{formatChips(row.net)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => setShowSessionLedger(false)}
+                  className="px-4 py-2 rounded-lg border border-white/25 bg-white/10 hover:bg-white/15 text-sm"
+                >
+                  Continue Playing
+                </button>
+                {isHost && (
+                  <button
+                    onClick={() => {
+                      setShowSessionLedger(false);
+                      onEndSession(sessionLedgerRows);
+                    }}
+                    className="px-4 py-2 rounded-lg border border-rose-300/40 bg-rose-900/35 hover:bg-rose-800/45 text-rose-100 text-sm font-semibold"
+                  >
+                    End Session
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         )}
 
         {isHost && manageTarget && (
@@ -849,7 +960,7 @@ export default function GameTable({
                   isDealer={origIdx === gameState.dealerIndex}
                   isSmallBlind={origIdx === gameState.smallBlindIndex}
                   isBigBlind={origIdx === gameState.bigBlindIndex}
-                  isActive={origIdx === gameState.currentPlayerIndex}
+                  isActive={gameState.stage !== 'showdown' && gameState.currentPlayerIndex >= 0 && origIdx === gameState.currentPlayerIndex}
                   isMe={roomPlayer.id === myPlayerId}
                   isShowdown={gameState.stage === 'showdown'}
                   isWinner={winnerIds.has(roomPlayer.id)}
@@ -860,6 +971,7 @@ export default function GameTable({
                   winsCount={winsByPlayer[roomPlayer.id] || 0}
                   statusText={!inHand ? (roomPlayer.isAway ? 'AWAY' : 'WAIT NEXT HAND') : undefined}
                   showCheckBubble={inHand?.player.bet === 0 && checkBubblePlayers.has(roomPlayer.id)}
+                  gameType={room.settings.gameType ?? 'short_deck'}
                 />
               </div>
             );
@@ -936,7 +1048,7 @@ export default function GameTable({
               </div>
             </div>
           )}
-          {(showHandResult || gameState.stage === 'showdown') && myPlayer && (
+          {(showHandResult || gameState.stage === 'showdown') && myPlayer && myPlayer.holeCards.length <= 2 && (
             <div
               className={clsx(
                 'relative w-[312px] rounded-xl overflow-hidden border-[3px] border-[#25d483] shadow-[0_10px_24px_rgba(0,0,0,0.35)]',
@@ -1001,7 +1113,27 @@ export default function GameTable({
               <div className="bg-white/92 text-black text-4 font-semibold px-6 py-2 rounded-lg">EXTRA TIME ACTIVATED</div>
             </>
           )}
-          {!showHandResult && gameState.stage !== 'showdown' && !showRaisePanel && (
+          {!showHandResult && gameState.stage !== 'showdown' && isDiscardStage && (
+            <div className="w-full rounded-xl border border-rose-300/30 bg-rose-950/35 p-3">
+              <div className="text-rose-200 font-semibold mb-2 text-sm">Crazy Pineapple: 请选择弃掉一张手牌</div>
+              <div className="grid grid-cols-3 gap-2">
+                {(myPlayer?.holeCards || []).map((c, i) => (
+                  <button
+                    key={`${c.rank}${c.suit}${i}`}
+                    disabled={!canAct}
+                    onClick={() => onAction('discard', i)}
+                    className={clsx(
+                      'rounded-lg border px-2 py-3 text-xl font-extrabold transition-colors',
+                      canAct ? 'border-rose-200/50 bg-rose-900/35 hover:bg-rose-800/45 text-rose-100' : 'border-white/20 bg-black/25 text-white/35'
+                    )}
+                  >
+                    {cardShortLabel(c)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {!showHandResult && gameState.stage !== 'showdown' && !showRaisePanel && !isDiscardStage && (
             <div className={clsx('grid gap-2 w-full', showPrimaryAction ? 'grid-cols-4' : 'grid-cols-3')}>
             {showPrimaryAction && (
               <ActionBox
@@ -1032,7 +1164,7 @@ export default function GameTable({
             />
             </div>
           )}
-          {!showHandResult && gameState.stage !== 'showdown' && canAct && myPlayer && canRaise && showRaisePanel && (
+          {!showHandResult && gameState.stage !== 'showdown' && canAct && myPlayer && canRaise && showRaisePanel && !isDiscardStage && (
             <div className="w-full rounded-xl border border-white/15 bg-black/45 p-2 space-y-2">
               <div className="flex items-stretch gap-2">
                 <div className="w-[180px] rounded-lg border border-white/15 bg-white/5 p-2 text-center">
@@ -1200,25 +1332,41 @@ function ActionBox({
   );
 }
 
-function RulesModal({ onClose }: { onClose: () => void }) {
-  const rows: Array<{ en: string; zh: string; cards: Array<{ rank: string; suit: string }> }> = [
-    { en: 'Royal Flush', zh: '皇家同花顺', cards: [{ rank: 'T', suit: '♠' }, { rank: 'J', suit: '♠' }, { rank: 'Q', suit: '♠' }, { rank: 'K', suit: '♠' }, { rank: 'A', suit: '♠' }] },
-    { en: 'Straight Flush', zh: '同花顺', cards: [{ rank: '9', suit: '♥' }, { rank: 'T', suit: '♥' }, { rank: 'J', suit: '♥' }, { rank: 'Q', suit: '♥' }, { rank: 'K', suit: '♥' }] },
-    { en: 'Four of a Kind', zh: '四条', cards: [{ rank: 'K', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'K', suit: '♥' }, { rank: 'K', suit: '♠' }, { rank: 'A', suit: '♣' }] },
-    { en: 'Flush', zh: '同花', cards: [{ rank: 'A', suit: '♠' }, { rank: 'K', suit: '♠' }, { rank: 'Q', suit: '♠' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♠' }] },
-    { en: 'Full House', zh: '葫芦', cards: [{ rank: 'A', suit: '♥' }, { rank: 'A', suit: '♦' }, { rank: 'A', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'K', suit: '♣' }] },
-    { en: 'Straight (A-6-7-8-9)', zh: '顺子（A-6-7-8-9）', cards: [{ rank: 'A', suit: '♣' }, { rank: '6', suit: '♦' }, { rank: '7', suit: '♠' }, { rank: '8', suit: '♥' }, { rank: '9', suit: '♣' }] },
-    { en: 'Three of a Kind', zh: '三条', cards: [{ rank: 'Q', suit: '♣' }, { rank: 'Q', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '8', suit: '♣' }] },
-    { en: 'Two Pair', zh: '两对', cards: [{ rank: 'A', suit: '♣' }, { rank: 'A', suit: '♦' }, { rank: 'K', suit: '♥' }, { rank: 'K', suit: '♠' }, { rank: '7', suit: '♣' }] },
-    { en: 'One Pair', zh: '一对', cards: [{ rank: 'A', suit: '♣' }, { rank: 'A', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♣' }] },
-    { en: 'High Card', zh: '高牌', cards: [{ rank: 'A', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♣' }] },
-  ];
+function RulesModal({ gameType, onClose }: { gameType: 'short_deck' | 'regular' | 'omaha' | 'crazy_pineapple'; onClose: () => void }) {
+  const useRegularRanking = gameType === 'regular' || gameType === 'omaha' || gameType === 'crazy_pineapple';
+  const rows: Array<{ en: string; zh: string; cards: Array<{ rank: string; suit: string }> }> = useRegularRanking
+    ? [
+      { en: 'Royal Flush', zh: '皇家同花顺', cards: [{ rank: 'T', suit: '♠' }, { rank: 'J', suit: '♠' }, { rank: 'Q', suit: '♠' }, { rank: 'K', suit: '♠' }, { rank: 'A', suit: '♠' }] },
+      { en: 'Straight Flush', zh: '同花顺', cards: [{ rank: '9', suit: '♥' }, { rank: 'T', suit: '♥' }, { rank: 'J', suit: '♥' }, { rank: 'Q', suit: '♥' }, { rank: 'K', suit: '♥' }] },
+      { en: 'Four of a Kind', zh: '四条', cards: [{ rank: 'K', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'K', suit: '♥' }, { rank: 'K', suit: '♠' }, { rank: 'A', suit: '♣' }] },
+      { en: 'Full House', zh: '葫芦', cards: [{ rank: 'A', suit: '♥' }, { rank: 'A', suit: '♦' }, { rank: 'A', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'K', suit: '♣' }] },
+      { en: 'Flush', zh: '同花', cards: [{ rank: 'A', suit: '♠' }, { rank: 'K', suit: '♠' }, { rank: 'Q', suit: '♠' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♠' }] },
+      { en: 'Straight (A-2-3-4-5)', zh: '顺子（A-2-3-4-5）', cards: [{ rank: 'A', suit: '♣' }, { rank: '2', suit: '♦' }, { rank: '3', suit: '♠' }, { rank: '4', suit: '♥' }, { rank: '5', suit: '♣' }] },
+      { en: 'Three of a Kind', zh: '三条', cards: [{ rank: 'Q', suit: '♣' }, { rank: 'Q', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '8', suit: '♣' }] },
+      { en: 'Two Pair', zh: '两对', cards: [{ rank: 'A', suit: '♣' }, { rank: 'A', suit: '♦' }, { rank: 'K', suit: '♥' }, { rank: 'K', suit: '♠' }, { rank: '7', suit: '♣' }] },
+      { en: 'One Pair', zh: '一对', cards: [{ rank: 'A', suit: '♣' }, { rank: 'A', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♣' }] },
+      { en: 'High Card', zh: '高牌', cards: [{ rank: 'A', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♣' }] },
+    ]
+    : [
+      { en: 'Royal Flush', zh: '皇家同花顺', cards: [{ rank: 'T', suit: '♠' }, { rank: 'J', suit: '♠' }, { rank: 'Q', suit: '♠' }, { rank: 'K', suit: '♠' }, { rank: 'A', suit: '♠' }] },
+      { en: 'Straight Flush', zh: '同花顺', cards: [{ rank: '9', suit: '♥' }, { rank: 'T', suit: '♥' }, { rank: 'J', suit: '♥' }, { rank: 'Q', suit: '♥' }, { rank: 'K', suit: '♥' }] },
+      { en: 'Four of a Kind', zh: '四条', cards: [{ rank: 'K', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'K', suit: '♥' }, { rank: 'K', suit: '♠' }, { rank: 'A', suit: '♣' }] },
+      { en: 'Flush', zh: '同花', cards: [{ rank: 'A', suit: '♠' }, { rank: 'K', suit: '♠' }, { rank: 'Q', suit: '♠' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♠' }] },
+      { en: 'Full House', zh: '葫芦', cards: [{ rank: 'A', suit: '♥' }, { rank: 'A', suit: '♦' }, { rank: 'A', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'K', suit: '♣' }] },
+      { en: 'Straight (A-6-7-8-9)', zh: '顺子（A-6-7-8-9）', cards: [{ rank: 'A', suit: '♣' }, { rank: '6', suit: '♦' }, { rank: '7', suit: '♠' }, { rank: '8', suit: '♥' }, { rank: '9', suit: '♣' }] },
+      { en: 'Three of a Kind', zh: '三条', cards: [{ rank: 'Q', suit: '♣' }, { rank: 'Q', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '8', suit: '♣' }] },
+      { en: 'Two Pair', zh: '两对', cards: [{ rank: 'A', suit: '♣' }, { rank: 'A', suit: '♦' }, { rank: 'K', suit: '♥' }, { rank: 'K', suit: '♠' }, { rank: '7', suit: '♣' }] },
+      { en: 'One Pair', zh: '一对', cards: [{ rank: 'A', suit: '♣' }, { rank: 'A', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♣' }] },
+      { en: 'High Card', zh: '高牌', cards: [{ rank: 'A', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♣' }] },
+    ];
 
   return (
     <div className="absolute inset-0 z-40 flex items-start justify-center bg-black/40 pt-8 md:pt-12">
       <div className="w-[780px] max-w-[92vw] rounded-xl border border-white/20 bg-[#141821] text-white p-4 shadow-[0_20px_45px_rgba(0,0,0,0.5)]">
         <div className="flex items-center justify-between">
-          <div className="text-lg font-bold">短牌比大小（当前版本）</div>
+          <div className="text-lg font-bold">
+            {gameType === 'short_deck' ? '短牌比大小' : gameType === 'regular' ? '常规德州比大小' : gameType === 'omaha' ? '奥马哈比大小' : 'Crazy Pineapple 比大小'}
+          </div>
           <button
             onClick={onClose}
             className="px-2.5 py-1 rounded bg-white/15 hover:bg-white/25 text-sm"
@@ -1245,7 +1393,13 @@ function RulesModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <div className="mt-3 text-xs text-white/75">
-          短牌规则提示：同花 &gt; 葫芦；顺子 &gt; 三条；A-6-7-8-9 为最小顺子。
+          {gameType === 'short_deck'
+            ? '短牌规则提示：同花 > 葫芦；A-6-7-8-9 为最小顺子。'
+            : gameType === 'regular'
+              ? '常规规则提示：葫芦 > 同花；A-2-3-4-5 为最小顺子。'
+              : gameType === 'omaha'
+                ? '奥马哈规则提示：每人4张手牌，必须且仅能使用2张手牌 + 3张公牌。'
+                : 'Crazy Pineapple 提示：每人先发3张手牌，翻牌圈结束后每位在手玩家必须弃1张。'}
         </div>
       </div>
     </div>

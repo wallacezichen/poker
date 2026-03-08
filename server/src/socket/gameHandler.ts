@@ -37,6 +37,14 @@ const BOT_NAMES = [
   '阿豪', '小明', '老王', '大牛', '小李', '阿强', '胖哥', '阿飞',
 ];
 
+function normalizeGameType(raw: unknown): RoomSettings['gameType'] {
+  const v = String(raw || '').toLowerCase().trim();
+  if (v === 'regular' || v === 'poker' || v === 'texas' || v === 'holdem') return 'regular';
+  if (v === 'omaha') return 'omaha';
+  if (v === 'crazy_pineapple' || v === 'crazy pineapple' || v === 'pineapple') return 'crazy_pineapple';
+  return 'short_deck';
+}
+
 function randomId(len = 8) {
   return Math.random().toString(36).substr(2, len).toUpperCase();
 }
@@ -106,6 +114,7 @@ export function registerGameHandlers(
       const roomId = roomCode();
       const playerId = randomId();
       const roomSettings: RoomSettings = {
+        gameType: normalizeGameType((settings as any)?.gameType),
         startingChips: settings.startingChips ?? 5000,
         smallBlind: settings.smallBlind ?? 50,
         bigBlind: settings.bigBlind ?? 100,
@@ -578,7 +587,10 @@ export function registerGameHandlers(
         id: p.id, name: p.name, color: p.color,
         chips: p.chips, isBot: p.isBot, isConnected: p.isConnected,
       })),
-      roomData.settings,
+      {
+        ...roomData.settings,
+        gameType: normalizeGameType((roomData.settings as any)?.gameType),
+      },
       0, // dealerIndex
       1, // handNumber
       roomId
@@ -834,7 +846,10 @@ async function getFullRoom(roomId: string) {
     id: roomData.id,
     hostId: roomData.host_id,
     status: roomData.status,
-    settings: roomData.settings,
+    settings: {
+      ...roomData.settings,
+      gameType: normalizeGameType((roomData.settings as any)?.gameType),
+    },
     players: enrichedPlayers,
     createdAt: roomData.created_at,
   };
@@ -857,15 +872,18 @@ function broadcastGameState(
 function publicPlayersForShowdown(state: FullGameState) {
   return state.players.map((p) => ({
     ...p,
-    holeCards:
-      (p.revealedMask ?? 0) === 3
+    holeCards: p.holeCards.length > 2
+      ? ((p.revealedMask ?? 0) === 3 ? p.holeCards.slice() : [])
+      : (p.revealedMask ?? 0) === 3
         ? p.holeCards.slice(0, 2)
         : (p.revealedMask ?? 0) === 1
           ? (p.holeCards[0] ? [p.holeCards[0]] : [])
           : (p.revealedMask ?? 0) === 2
             ? (p.holeCards[1] ? [p.holeCards[1]] : [])
             : [],
-    revealedCount: ((p.revealedMask ?? 0) & 1 ? 1 : 0) + ((p.revealedMask ?? 0) & 2 ? 1 : 0),
+    revealedCount: p.holeCards.length > 2 && (p.revealedMask ?? 0) === 3
+      ? p.holeCards.length
+      : ((p.revealedMask ?? 0) & 1 ? 1 : 0) + ((p.revealedMask ?? 0) & 2 ? 1 : 0),
   }));
 }
 
@@ -888,6 +906,7 @@ function isRunItTwiceEligible(state: FullGameState): boolean {
   const remaining = state.players.filter(p => !p.folded);
   if (remaining.length !== 2) return false;
   if (!remaining.some(p => p.allIn)) return false;
+  if ((state.gameType ?? 'short_deck') === 'crazy_pineapple' && remaining.some(p => p.holeCards.length > 2)) return false;
   if (state.communityCards.length >= 5) return false;
   return true;
 }
@@ -900,6 +919,7 @@ function maybeStartRunItTwiceOffer(io: Server, roomId: string, state: FullGameSt
   const votes: Record<string, boolean | null> = {};
   for (const p of remaining) votes[p.id] = null;
   state.runItTwice = { status: 'pending', votes };
+  state.currentPlayerIndex = -1;
   saveGameState(state).catch(console.error);
   broadcastGameState(io, roomId, state);
   return true;
@@ -1056,7 +1076,10 @@ async function startNextHand(io: Server, roomId: string) {
       id: p.id, name: p.name, color: p.color,
       chips: p.chips, isBot: p.isBot, isConnected: p.isConnected,
     })),
-    roomData.settings,
+    {
+      ...roomData.settings,
+      gameType: normalizeGameType((roomData.settings as any)?.gameType),
+    },
     newDealerIdx,
     handNum,
     roomId

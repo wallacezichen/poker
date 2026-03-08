@@ -1,9 +1,10 @@
 'use client';
 import { useState } from 'react';
 import clsx from 'clsx';
+import { GameType, RoomSettings } from '../types/poker';
 
 interface LobbyProps {
-  onCreateRoom: (name: string, settings: any) => Promise<{ success: boolean; error?: string }>;
+  onCreateRoom: (name: string, settings: Partial<RoomSettings>) => Promise<{ success: boolean; error?: string }>;
   onJoinRoom: (roomId: string, name: string) => Promise<{ success: boolean; error?: string }>;
   isConnected: boolean;
   initialRoomId?: string;
@@ -22,9 +23,52 @@ const BLIND_OPTIONS = [
   { label: '50/100', small: 50, big: 100 },
 ];
 
+const GAME_THEME: Record<GameType, {
+  title: string;
+  subtitle: string;
+  badge: string;
+  pageBg: string;
+  cardBg: string;
+  activePill: string;
+}> = {
+  short_deck: {
+    title: '短牌扑克',
+    subtitle: "Short Deck Texas Hold'em",
+    badge: '6+',
+    pageBg: 'radial-gradient(ellipse at center, #1a4a2e 0%, #061510 100%)',
+    cardBg: 'bg-white/5 border-gold/20',
+    activePill: 'bg-gold/85 text-black border-gold',
+  },
+  regular: {
+    title: '常规德州',
+    subtitle: "Regular Texas Hold'em",
+    badge: '52',
+    pageBg: 'radial-gradient(ellipse at center, #132651 0%, #050814 100%)',
+    cardBg: 'bg-sky-950/30 border-sky-300/30',
+    activePill: 'bg-sky-300 text-[#08152f] border-sky-200',
+  },
+  omaha: {
+    title: '奥马哈',
+    subtitle: "Pot-Limit Omaha Style",
+    badge: 'OMAHA',
+    pageBg: 'radial-gradient(ellipse at center, #4f2a11 0%, #140903 100%)',
+    cardBg: 'bg-amber-950/20 border-amber-200/30',
+    activePill: 'bg-amber-200 text-amber-950 border-amber-100',
+  },
+  crazy_pineapple: {
+    title: 'Crazy Pineapple',
+    subtitle: "Hold'em with Flop Discard",
+    badge: 'PINE',
+    pageBg: 'radial-gradient(ellipse at center, #3f0f2f 0%, #14060f 100%)',
+    cardBg: 'bg-fuchsia-950/20 border-fuchsia-200/30',
+    activePill: 'bg-fuchsia-200 text-fuchsia-950 border-fuchsia-100',
+  },
+};
+
 export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRoomId }: LobbyProps) {
   const [playerName, setPlayerName] = useState('');
   const [joinCode, setJoinCode] = useState(initialRoomId || '');
+  const [gameType, setGameType] = useState<GameType>('short_deck');
   const [startingChips, setStartingChips] = useState(1000);
   const [blindIdx, setBlindIdx] = useState(0); // 5/10
   const [loading, setLoading] = useState(false);
@@ -36,6 +80,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
     setLoading(true); setError('');
     const blind = BLIND_OPTIONS[blindIdx];
     const res = await onCreateRoom(playerName.trim(), {
+      gameType,
       startingChips,
       smallBlind: blind.small,
       bigBlind: blind.big,
@@ -53,19 +98,21 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
     if (!res.success) setError(res.error || '加入失败');
   }
 
+  const theme = GAME_THEME[gameType];
+
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center p-4"
-      style={{ background: 'radial-gradient(ellipse at center, #1a4a2e 0%, #061510 100%)' }}
+      style={{ background: theme.pageBg }}
     >
       {/* Logo */}
       <div className="mb-8 text-center">
         <h1 className="font-display text-[4.5rem] md:text-[7rem] text-gold tracking-[6px] leading-none"
           style={{ textShadow: '0 0 40px rgba(212,168,71,0.4), 3px 3px 0 #8b6914' }}
         >
-          短牌扑克
+          {theme.title}
         </h1>
-        <p className="text-white/40 tracking-[6px] text-xs uppercase mt-2">Short Deck Texas Hold'em</p>
+        <p className="text-white/40 tracking-[6px] text-xs uppercase mt-2">{theme.subtitle}</p>
 
         {/* Connection status */}
         <div className="flex items-center justify-center gap-1.5 mt-3">
@@ -75,7 +122,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
       </div>
 
       {/* Main card */}
-      <div className="w-full max-w-md bg-white/5 border border-gold/20 rounded-2xl p-6 backdrop-blur-sm">
+      <div className={clsx('w-full max-w-md border rounded-2xl p-6 backdrop-blur-sm transition-all', theme.cardBg)}>
         {/* Name input */}
         <div className="mb-5">
           <label className="text-xs text-white/40 uppercase tracking-widest block mb-2">你的昵称</label>
@@ -92,6 +139,59 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
 
         {/* Create Room */}
         <div className="mb-3">
+          <div className="mb-3">
+            <label className="text-xs text-white/40 uppercase tracking-widest block mb-2">游戏模式</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setGameType('short_deck')}
+                className={clsx(
+                  'px-3 py-2.5 rounded-xl text-sm border transition-all',
+                  gameType === 'short_deck' ? GAME_THEME.short_deck.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
+                )}
+              >
+                短牌 (6+) <span className="text-xs opacity-75">36张牌</span>
+              </button>
+              <button
+                onClick={() => setGameType('regular')}
+                className={clsx(
+                  'px-3 py-2.5 rounded-xl text-sm border transition-all',
+                  gameType === 'regular' ? GAME_THEME.regular.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
+                )}
+              >
+                常规 (52) <span className="text-xs opacity-75">52张牌</span>
+              </button>
+              <button
+                onClick={() => setGameType('omaha')}
+                className={clsx(
+                  'px-3 py-2.5 rounded-xl text-sm border transition-all',
+                  gameType === 'omaha' ? GAME_THEME.omaha.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
+                )}
+              >
+                Omaha <span className="text-xs opacity-75">4手牌</span>
+              </button>
+              <button
+                onClick={() => setGameType('crazy_pineapple')}
+                className={clsx(
+                  'px-3 py-2.5 rounded-xl text-sm border transition-all',
+                  gameType === 'crazy_pineapple' ? GAME_THEME.crazy_pineapple.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
+                )}
+              >
+                Crazy Pineapple <span className="text-xs opacity-75">3手牌翻牌后弃1</span>
+              </button>
+            </div>
+            <div className="mt-2 text-xs text-white/45">
+              当前：{theme.badge} · {
+                gameType === 'short_deck'
+                  ? '同花大于葫芦；A-6-7-8-9最小顺子'
+                  : gameType === 'regular'
+                    ? '标准德州规则；A-2-3-4-5最小顺子'
+                    : gameType === 'omaha'
+                      ? '每人4张手牌；必须用2张手牌+3张公牌'
+                      : '每人3张手牌；翻牌圈结束后必须弃1张'
+              }
+            </div>
+          </div>
+
           <button
             onClick={() => setShowCreateSettings(!showCreateSettings)}
             className="text-xs text-white/40 hover:text-gold mb-2 flex items-center gap-1 transition-colors"

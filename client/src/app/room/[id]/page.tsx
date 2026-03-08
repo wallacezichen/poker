@@ -6,6 +6,34 @@ import { useGameStore } from '../../../store/gameStore';
 import WaitingRoom from '../../../components/WaitingRoom';
 import GameTable from '../../../components/GameTable';
 import { clearRoomIdentity, getRoomIdentity } from '../../../lib/playerSession';
+import { GameType } from '../../../types/poker';
+
+const GAME_THEME: Record<GameType, { bg: string; panel: string; badge: string; label: string }> = {
+  short_deck: {
+    bg: 'radial-gradient(ellipse at center, #1a4a2e 0%, #061510 100%)',
+    panel: 'bg-white/5 border border-gold/20',
+    badge: 'bg-gradient-to-r from-gold-dark to-gold text-black',
+    label: '短牌德州',
+  },
+  regular: {
+    bg: 'radial-gradient(ellipse at center, #132651 0%, #070c1a 100%)',
+    panel: 'bg-sky-950/25 border border-sky-300/30',
+    badge: 'bg-gradient-to-r from-sky-200 to-cyan-100 text-sky-900',
+    label: '常规德州',
+  },
+  omaha: {
+    bg: 'radial-gradient(ellipse at center, #4f2a11 0%, #140903 100%)',
+    panel: 'bg-amber-950/20 border border-amber-200/30',
+    badge: 'bg-gradient-to-r from-amber-200 to-yellow-100 text-amber-900',
+    label: '奥马哈',
+  },
+  crazy_pineapple: {
+    bg: 'radial-gradient(ellipse at center, #3f0f2f 0%, #14060f 100%)',
+    panel: 'bg-fuchsia-950/20 border border-fuchsia-200/30',
+    badge: 'bg-gradient-to-r from-fuchsia-200 to-pink-100 text-fuchsia-900',
+    label: 'Crazy Pineapple',
+  },
+};
 
 export default function RoomPage() {
   const params = useParams();
@@ -25,6 +53,29 @@ export default function RoomPage() {
   const [resumeChecked, setResumeChecked] = useState(false);
   const [rebuyAmount, setRebuyAmount] = useState('');
   const [rebuySubmitting, setRebuySubmitting] = useState(false);
+  const [roomPreviewGameType, setRoomPreviewGameType] = useState<GameType>('short_deck');
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadRoomPreview() {
+      if (!roomId || room) return;
+      try {
+        const base = (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:4000').replace(/\/$/, '');
+        const res = await fetch(`${base}/api/rooms/${roomId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const gt = data?.settings?.gameType;
+        if (gt === 'regular' || gt === 'short_deck' || gt === 'omaha' || gt === 'crazy_pineapple') {
+          setRoomPreviewGameType(gt);
+        }
+      } catch {
+        // ignore preview fetch failure
+      }
+    }
+    loadRoomPreview();
+    return () => { cancelled = true; };
+  }, [roomId, room]);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,6 +165,24 @@ export default function RoomPage() {
     if (!res.success) alert(res.error || 'Vote failed');
   }
 
+  function handleEndSession(rows: Array<{ id: string; name: string; buyIn: number; buyOut: number; net: number }>) {
+    try {
+      window.sessionStorage.setItem(
+        `ledger:${roomId}`,
+        JSON.stringify({
+          roomId,
+          gameType: room?.settings?.gameType ?? 'short_deck',
+          rows,
+          endedAt: Date.now(),
+        })
+      );
+    } catch {
+      // ignore storage failures
+    }
+    leaveRoom();
+    router.push(`/room/${roomId}/settlement`);
+  }
+
   useEffect(() => {
     if (!rebuyPrompt) return;
     setRebuyAmount(String(rebuyPrompt.defaultBuyIn));
@@ -167,12 +236,16 @@ export default function RoomPage() {
 
   // Direct link join — ask for name
   if (needsName && !room) {
+    const theme = GAME_THEME[roomPreviewGameType];
     return (
       <div
         className="min-h-screen flex items-center justify-center p-4"
-        style={{ background: 'radial-gradient(ellipse at center, #1a4a2e 0%, #061510 100%)' }}
+        style={{ background: theme.bg }}
       >
-        <div className="w-full max-w-sm bg-white/5 border border-gold/20 rounded-2xl p-8 text-center">
+        <div className={`w-full max-w-sm rounded-2xl p-8 text-center ${theme.panel}`}>
+          <span className={`inline-block text-xs font-bold px-3 py-1 rounded-full mb-3 ${theme.badge}`}>
+            {theme.label}
+          </span>
           <div className="font-display text-4xl text-gold tracking-widest mb-2">加入房间</div>
           <div className="text-white/40 text-sm mb-6">房间码: <span className="text-gold font-display text-lg">{roomId}</span></div>
 
@@ -283,6 +356,7 @@ export default function RoomPage() {
         onNextHand={nextHand}
         onRevealCards={handleRevealCards}
         onRunItTwiceVote={handleRunItTwiceVote}
+        onEndSession={handleEndSession}
         onLeave={handleLeave}
       />
       {rebuyPrompt && (

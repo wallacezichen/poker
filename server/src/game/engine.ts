@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import {
   Card, GameState, PlayerState, ActionType,
-  WinnerInfo, ActionLogEntry, RoomSettings, GameStage
+  WinnerInfo, ActionLogEntry, RoomSettings, GameStage, GameType, HandResult
 } from '../types/poker';
 import { createDeck, evaluateHand, compareHands } from './handEvaluator';
 
@@ -18,7 +18,7 @@ export interface FullGameState extends GameState {
 
 function dealCard(state: FullGameState): Card {
   if (state.deckIndex >= state.deck.length) {
-    state.deck = createDeck();
+    state.deck = createDeck(state.gameType ?? 'short_deck');
     state.deckIndex = 0;
   }
   return state.deck[state.deckIndex++];
@@ -59,6 +59,9 @@ function bitCount(mask: number): number {
 }
 
 function publicHoleCardsForMask(holeCards: Card[], mask: number): Card[] {
+  if (holeCards.length > 2) {
+    return mask === 3 ? holeCards.slice() : [];
+  }
   if (mask === 3) return holeCards.slice(0, 2);
   if (mask === 1) return holeCards[0] ? [holeCards[0]] : [];
   if (mask === 2) return holeCards[1] ? [holeCards[1]] : [];
@@ -105,9 +108,54 @@ function formatHandLabelEnDetailed(result: ReturnType<typeof evaluateHand>): str
 
 function communityCountForStage(stage: GameStage): number {
   if (stage === 'flop') return 3;
+  if (stage === 'flop_discard') return 3;
   if (stage === 'turn') return 4;
   if (stage === 'river' || stage === 'showdown') return 5;
   return 0;
+}
+
+function combos<T>(arr: T[], k: number): T[][] {
+  if (k === arr.length) return [arr];
+  if (k === 1) return arr.map(x => [x]);
+  const out: T[][] = [];
+  for (let i = 0; i <= arr.length - k; i++) {
+    for (const tail of combos(arr.slice(i + 1), k - 1)) out.push([arr[i], ...tail]);
+  }
+  return out;
+}
+
+function evaluatePlayerHandForVariant(player: PlayerState, board: Card[], gameType: GameType): HandResult {
+  if (gameType !== 'omaha') {
+    return evaluateHand([...player.holeCards, ...board], gameType);
+  }
+
+  if (player.holeCards.length < 2 || board.length < 3) {
+    return { rank: -1, name: 'Invalid', nameZh: '无效', tiebreak: [] };
+  }
+
+  let best: HandResult | null = null;
+  let bestCards: Card[] = [];
+  for (const hole of combos(player.holeCards, 2)) {
+    for (const brd of combos(board, 3)) {
+      const candidateCards = [...hole, ...brd];
+      const candidate = evaluateHand(candidateCards, 'regular');
+      if (!best || compareHands(candidate, best) > 0) {
+        best = candidate;
+        bestCards = candidateCards;
+      } else if (best && compareHands(candidate, best) === 0) {
+        const seen = new Set(bestCards.map(c => `${c.rank}${c.suit}`));
+        for (const c of candidateCards) {
+          const key = `${c.rank}${c.suit}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            bestCards.push(c);
+          }
+        }
+      }
+    }
+  }
+
+  return { ...best!, cards: bestCards };
 }
 
 function evaluateSingleRunWinners(
@@ -117,16 +165,17 @@ function evaluateSingleRunWinners(
 ): WinnerInfo[] {
   const contenders = state.players.filter(p => !p.folded);
   const hasAllInContender = contenders.some(p => p.allIn);
+  const forceFullReveal = hasAllInContender || (state.gameType === 'omaha' || state.gameType === 'crazy_pineapple');
   const results = new Map<string, ReturnType<typeof evaluateHand>>();
   for (const p of contenders) {
-    const result = evaluateHand([...p.holeCards, ...board]);
+    const result = evaluatePlayerHandForVariant(p, board, state.gameType ?? 'short_deck');
     results.set(p.id, result);
     p.handResult = result;
     const labels = p.runItTwiceHandNamesZh ? [...p.runItTwiceHandNamesZh] : ['', ''];
     labels[runIndex] = formatHandLabelEnDetailed(result);
     p.runItTwiceHandNamesZh = [labels[0], labels[1]];
-    p.revealedMask = hasAllInContender ? 3 : 0;
-    p.revealedCount = hasAllInContender ? 2 : 0;
+    p.revealedMask = forceFullReveal ? 3 : 0;
+    p.revealedCount = forceFullReveal ? p.holeCards.length : 0;
   }
 
   let best = results.get(contenders[0].id)!;
@@ -157,7 +206,7 @@ function evaluateSingleRunWinners(
       });
     }
     const bestLabel = runWinners.length > 0 ? formatHandLabelEnDetailed(results.get(runWinners[0].id)!) : '';
-    const line = { names: runWinners.map((w) => w.name), handLabel: bestLabel };
+    const line = { playerIds: runWinners.map((w) => w.id), names: runWinners.map((w) => w.name), handLabel: bestLabel };
     if (!state.runItTwice.runResults) state.runItTwice.runResults = [];
     if (state.runItTwice.runResults.length <= runIndex) state.runItTwice.runResults.push(line);
     else state.runItTwice.runResults[runIndex] = line;
@@ -171,12 +220,15 @@ function shouldOpenRunItTwiceOffer(state: FullGameState): boolean {
   const remaining = state.players.filter(p => !p.folded);
   if (remaining.length !== 2) return false;
   if (!remaining.some(p => p.allIn)) return false;
+  if ((state.gameType ?? 'short_deck') === 'crazy_pineapple' && remaining.some(p => p.holeCards.length > 2)) return false;
   if (state.communityCards.length >= 5) return false;
   return state.playersToAct.length === 0;
 }
 
-function nextStage(stage: GameStage): GameStage {
-  const stages: GameStage[] = ['preflop', 'flop', 'turn', 'river', 'showdown'];
+function nextStage(stage: GameStage, gameType: GameType): GameStage {
+  const stages: GameStage[] = gameType === 'crazy_pineapple'
+    ? ['preflop', 'flop', 'flop_discard', 'turn', 'river', 'showdown']
+    : ['preflop', 'flop', 'turn', 'river', 'showdown'];
   const idx = stages.indexOf(stage);
   return stages[idx + 1] || 'showdown';
 }
@@ -220,6 +272,28 @@ function splitPotByBestHand(
   }
 }
 
+// If the largest bet is uncalled, refund the unmatched portion immediately.
+function settleUncalledOverbet(state: FullGameState): void {
+  const contenders = state.players.filter((p) => !p.folded);
+  if (contenders.length < 2) return;
+  if (state.playersToAct.length > 0) return;
+
+  const sorted = [...contenders].sort((a, b) => b.bet - a.bet);
+  const top = sorted[0];
+  const second = sorted[1];
+  if (!top || !second) return;
+  if (top.bet <= second.bet) return;
+  if (sorted.filter((p) => p.bet === top.bet).length > 1) return;
+
+  const refund = top.bet - second.bet;
+  top.bet -= refund;
+  top.totalBet -= refund;
+  top.chips += refund;
+  if (top.chips > 0) top.allIn = false;
+  state.pot -= refund;
+  state.currentBet = Math.max(...contenders.map((p) => p.bet));
+}
+
 // Initialize a brand new hand
 export function initHand(
   players: Array<{ id: string; name: string; color: string; chips: number; isBot: boolean; isConnected: boolean }>,
@@ -228,7 +302,7 @@ export function initHand(
   handNumber: number,
   roomId: string
 ): FullGameState {
-  const deck = createDeck();
+  const deck = createDeck(settings.gameType ?? 'short_deck');
   const activePlayers = players.filter(p => p.chips > 0 && p.isConnected);
 
   const playerStates: PlayerState[] = activePlayers.map((p, i) => ({
@@ -257,6 +331,7 @@ export function initHand(
 
   const state: FullGameState = {
     roomId,
+    gameType: settings.gameType ?? 'short_deck',
     handNumber,
     stage: 'preflop',
     communityCards: [],
@@ -278,8 +353,8 @@ export function initHand(
     playersToAct: [],
   };
 
-  // Deal 2 hole cards to each player
-  for (let i = 0; i < 2; i++) {
+  const holeCardCount = state.gameType === 'omaha' ? 4 : state.gameType === 'crazy_pineapple' ? 3 : 2;
+  for (let i = 0; i < holeCardCount; i++) {
     for (const p of state.players) {
       p.holeCards.push(dealCard(state));
     }
@@ -330,6 +405,27 @@ export function applyAction(
 
   const player = state.players[idx];
   if (player.folded || player.allIn) return { state, error: 'Player cannot act' };
+
+  if (state.stage === 'flop_discard') {
+    if (action !== 'discard') return { state, error: 'Must discard one card before turn' };
+    if (player.holeCards.length <= 2) return { state, error: 'No card to discard' };
+    const discardIdx = Math.max(0, Math.min(player.holeCards.length - 1, Math.floor(raiseAmount ?? (player.holeCards.length - 1))));
+    player.holeCards.splice(discardIdx, 1);
+    removePlayerToAct(state, player.id);
+    state.actionLog.push({
+      playerId: player.id,
+      playerName: player.name,
+      action: 'discard',
+      amount: discardIdx + 1,
+      timestamp: Date.now(),
+    });
+    if (state.playersToAct.length === 0) {
+      advanceStage(state);
+    } else {
+      moveToNextPlayer(state);
+    }
+    return { state };
+  }
 
   const logEntry: ActionLogEntry = {
     playerId: player.id,
@@ -435,6 +531,8 @@ export function applyAction(
     return { state: endHandByFolds(state, remaining) };
   }
 
+  settleUncalledOverbet(state);
+
   // Heads-up all-in: open run-it-twice decision BEFORE dealing next street.
   if (shouldOpenRunItTwiceOffer(state)) {
     const votes: Record<string, boolean | null> = {};
@@ -444,11 +542,18 @@ export function applyAction(
       votes,
       boards: undefined,
     };
+    state.currentPlayerIndex = -1;
     return { state };
   }
 
   // Advance to next player / next stage
   advanceGame(state);
+  if (shouldOpenRunItTwiceOffer(state)) {
+    const votes: Record<string, boolean | null> = {};
+    for (const p of state.players.filter(x => !x.folded)) votes[p.id] = null;
+    state.runItTwice = { status: 'pending', votes, boards: undefined };
+    state.currentPlayerIndex = -1;
+  }
   return { state };
 }
 
@@ -490,7 +595,9 @@ function advanceStage(state: FullGameState): void {
   state.lastRaiseIndex = -1;
   state.lastRaiseSize = state.bigBlind;
 
-  const stages: GameStage[] = ['preflop', 'flop', 'turn', 'river', 'showdown'];
+  const stages: GameStage[] = (state.gameType ?? 'short_deck') === 'crazy_pineapple'
+    ? ['preflop', 'flop', 'flop_discard', 'turn', 'river', 'showdown']
+    : ['preflop', 'flop', 'turn', 'river', 'showdown'];
   const currentIdx = stages.indexOf(state.stage);
   state.stage = stages[currentIdx + 1] || 'showdown';
 
@@ -498,6 +605,20 @@ function advanceStage(state: FullGameState): void {
     case 'flop':
       state.communityCards.push(dealCard(state), dealCard(state), dealCard(state));
       break;
+    case 'flop_discard': {
+      for (const p of state.players) {
+        if (!p.folded && p.holeCards.length > 2 && p.allIn) p.holeCards.pop();
+      }
+      const discardActors = state.players.filter((p) => !p.folded && !p.allIn && p.holeCards.length > 2);
+      if (discardActors.length === 0) {
+        advanceStage(state);
+        return;
+      }
+      state.playersToAct = discardActors.map((p) => p.id);
+      const firstDiscard = discardActors.sort((a, b) => a.seatIndex - b.seatIndex)[0];
+      state.currentPlayerIndex = state.players.findIndex((p) => p.id === firstDiscard.id);
+      return;
+    }
     case 'turn':
       state.communityCards.push(dealCard(state));
       break;
@@ -513,6 +634,7 @@ function advanceStage(state: FullGameState): void {
   // do not open a new betting round. This allows automatic runout.
   if (countLiveNotAllIn(state) <= 1) {
     state.playersToAct = [];
+    state.currentPlayerIndex = -1;
     return;
   }
 
@@ -531,16 +653,16 @@ function advanceStage(state: FullGameState): void {
 function resolveShowdown(state: FullGameState): void {
   const contenders = state.players.filter(p => !p.folded);
   const hasAllInContender = contenders.some(p => p.allIn);
+  const forceFullReveal = hasAllInContender || (state.gameType === 'omaha' || state.gameType === 'crazy_pineapple');
 
   for (const p of contenders) {
-    p.revealedMask = hasAllInContender ? 3 : 0;
-    p.revealedCount = hasAllInContender ? 2 : 0;
+    p.revealedMask = forceFullReveal ? 3 : 0;
+    p.revealedCount = forceFullReveal ? p.holeCards.length : 0;
   }
 
   // Evaluate hands
   for (const p of contenders) {
-    const allCards = [...p.holeCards, ...state.communityCards];
-    p.handResult = evaluateHand(allCards);
+    p.handResult = evaluatePlayerHandForVariant(p, state.communityCards, state.gameType ?? 'short_deck');
   }
 
   // Build side pots from total contributions.
@@ -579,7 +701,7 @@ function resolveShowdown(state: FullGameState): void {
     .filter(p => (winnings.get(p.id) || 0) > 0)
     .map((w) => {
       w.revealedMask = 3;
-      w.revealedCount = 2;
+      w.revealedCount = w.holeCards.length;
       return {
         playerId: w.id,
         name: w.name,
@@ -597,6 +719,7 @@ function resolveShowdown(state: FullGameState): void {
 function resolveShowdownRunItTwice(state: FullGameState): void {
   const contenders = state.players.filter(p => !p.folded);
   const hasAllInContender = contenders.some(p => p.allIn);
+  const forceFullReveal = hasAllInContender || (state.gameType === 'omaha' || state.gameType === 'crazy_pineapple');
   const boards = state.runItTwice?.boards;
   if (!boards || boards.length !== 2) {
     resolveShowdown(state);
@@ -608,14 +731,14 @@ function resolveShowdownRunItTwice(state: FullGameState): void {
   const results2 = new Map<string, ReturnType<typeof evaluateHand>>();
 
   for (const p of contenders) {
-    const r1 = evaluateHand([...p.holeCards, ...board1]);
-    const r2 = evaluateHand([...p.holeCards, ...board2]);
+    const r1 = evaluatePlayerHandForVariant(p, board1, state.gameType ?? 'short_deck');
+    const r2 = evaluatePlayerHandForVariant(p, board2, state.gameType ?? 'short_deck');
     results1.set(p.id, r1);
     results2.set(p.id, r2);
     p.handResult = r1;
     p.runItTwiceHandNamesZh = [formatHandLabelEnDetailed(r1), formatHandLabelEnDetailed(r2)];
-    p.revealedMask = hasAllInContender ? 3 : 0;
-    p.revealedCount = hasAllInContender ? 2 : 0;
+    p.revealedMask = forceFullReveal ? 3 : 0;
+    p.revealedCount = forceFullReveal ? p.holeCards.length : 0;
   }
   const allPlayers = state.players.filter(p => p.totalBet > 0);
   const levels = Array.from(new Set(allPlayers.map(p => p.totalBet))).sort((a, b) => a - b);
@@ -649,7 +772,7 @@ function resolveShowdownRunItTwice(state: FullGameState): void {
       const chipsWon = winnings.get(w.id)!;
       w.chips += chipsWon;
       w.revealedMask = 3;
-      w.revealedCount = 2;
+      w.revealedCount = w.holeCards.length;
       return {
         playerId: w.id,
         name: w.name,
@@ -691,7 +814,7 @@ export function sanitizeStateFor(state: FullGameState, viewerId: string): GameSt
     players: state.players.map(p => ({
       ...p,
       holeCards: p.id === viewerId ? p.holeCards : publicHoleCardsForMask(p.holeCards, p.revealedMask ?? 0),
-      revealedCount: bitCount(p.revealedMask ?? 0),
+      revealedCount: p.holeCards.length > 2 && (p.revealedMask ?? 0) === 3 ? p.holeCards.length : bitCount(p.revealedMask ?? 0),
     })),
   };
 }
@@ -710,6 +833,7 @@ export function advanceRunoutStreet(state: FullGameState): FullGameState {
       state.runItTwice.baseStage = state.stage;
       state.runItTwice.summary = [];
       state.runItTwice.runResults = [];
+      state.currentPlayerIndex = -1;
     }
 
     if (state.runItTwice.phase === 'run1_showdown') {
@@ -717,11 +841,13 @@ export function advanceRunoutStreet(state: FullGameState): FullGameState {
       state.stage = state.runItTwice.baseStage ?? 'preflop';
       state.communityCards = state.runItTwice.boards[1].slice(0, communityCountForStage(state.stage));
       state.winners = [];
+      state.currentPlayerIndex = -1;
       return state;
     }
     if (state.runItTwice.phase === 'run2_showdown') {
       resolveShowdownRunItTwice(state);
       state.runItTwice.phase = 'final';
+      state.currentPlayerIndex = -1;
       return state;
     }
     if (state.runItTwice.phase === 'final') return state;
@@ -732,18 +858,28 @@ export function advanceRunoutStreet(state: FullGameState): FullGameState {
     state.lastRaiseSize = state.bigBlind;
     const currentRunIdx = state.runItTwice.phase === 'run2' ? 1 : 0;
     const board = state.runItTwice.boards[currentRunIdx];
-    const toStage = nextStage(state.stage);
+    const toStage = nextStage(state.stage, state.gameType ?? 'short_deck');
+    if (toStage === 'flop_discard') {
+      for (const p of state.players) {
+        if (!p.folded && p.holeCards.length > 2) p.holeCards.pop();
+      }
+      state.stage = 'flop_discard';
+      state.communityCards = board.slice();
+      return state;
+    }
     if (toStage === 'showdown') {
       state.stage = 'showdown';
       state.communityCards = board.slice(0, 5);
       state.winners = evaluateSingleRunWinners(state, board, currentRunIdx as 0 | 1);
       state.runItTwice.phase = currentRunIdx === 0 ? 'run1_showdown' : 'run2_showdown';
+      state.currentPlayerIndex = -1;
       return state;
     }
 
     state.stage = toStage;
     dealStreetToBoard(state, board, toStage);
     state.communityCards = board.slice();
+    state.currentPlayerIndex = -1;
     return state;
   }
 

@@ -9,6 +9,14 @@ const supabase = createClient(
 
 export default supabase;
 
+function normalizeGameType(raw: unknown): RoomSettings['gameType'] {
+  const v = String(raw || '').toLowerCase().trim();
+  if (v === 'regular' || v === 'poker' || v === 'texas' || v === 'holdem') return 'regular';
+  if (v === 'omaha') return 'omaha';
+  if (v === 'crazy_pineapple' || v === 'crazy pineapple' || v === 'pineapple') return 'crazy_pineapple';
+  return 'short_deck';
+}
+
 // ============================================================
 // Room Operations
 // ============================================================
@@ -158,6 +166,11 @@ export async function loadGameState(roomId: string): Promise<FullGameState | nul
     .single();
 
   if (error || !data) return null;
+  const { data: roomMeta } = await supabase
+    .from('rooms')
+    .select('settings')
+    .eq('id', roomId)
+    .single();
 
   const playersToAct = (data.players_to_act as string[] | null) ?? (
     (data.player_states || [])
@@ -167,6 +180,7 @@ export async function loadGameState(roomId: string): Promise<FullGameState | nul
 
   return {
     roomId,
+    gameType: normalizeGameType(roomMeta?.settings?.gameType),
     handNumber: data.hand_number,
     stage: data.stage,
     communityCards: data.community_cards,

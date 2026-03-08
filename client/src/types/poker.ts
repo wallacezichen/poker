@@ -2,16 +2,17 @@
 // Keep in sync with server
 
 export type Suit = '♠' | '♥' | '♦' | '♣';
-export type Rank = '6' | '7' | '8' | '9' | 'T' | 'J' | 'Q' | 'K' | 'A';
+export type Rank = '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 'T' | 'J' | 'Q' | 'K' | 'A';
+export type GameType = 'short_deck' | 'regular' | 'omaha' | 'crazy_pineapple';
 
 export interface Card {
   rank: Rank;
   suit: Suit;
 }
 
-export type GameStage = 'waiting' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
+export type GameStage = 'waiting' | 'preflop' | 'flop' | 'flop_discard' | 'turn' | 'river' | 'showdown';
 export type RoomStatus = 'waiting' | 'playing' | 'finished';
-export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'allin';
+export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'allin' | 'discard';
 
 export interface PlayerState {
   id: string;
@@ -42,6 +43,7 @@ export interface HandResult {
 
 export interface GameState {
   roomId: string;
+  gameType?: GameType;
   handNumber: number;
   stage: GameStage;
   communityCards: Card[];
@@ -66,7 +68,7 @@ export interface RunItTwiceState {
   votes: Record<string, boolean | null>;
   boards?: [Card[], Card[]];
   summary?: Array<{ name: string; handLabel: string }>;
-  runResults?: Array<{ names: string[]; handLabel: string }>;
+  runResults?: Array<{ playerIds?: string[]; names: string[]; handLabel: string }>;
   baseStage?: GameStage;
   phase?: 'run1' | 'run1_showdown' | 'run2' | 'run2_showdown' | 'final';
 }
@@ -89,6 +91,7 @@ export interface ActionLogEntry {
 }
 
 export interface RoomSettings {
+  gameType: GameType;
   startingChips: number;
   smallBlind: number;
   bigBlind: number;

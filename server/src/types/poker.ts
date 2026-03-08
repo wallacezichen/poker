@@ -4,16 +4,17 @@
 // ============================================================
 
 export type Suit = '♠' | '♥' | '♦' | '♣';
-export type Rank = '6' | '7' | '8' | '9' | 'T' | 'J' | 'Q' | 'K' | 'A';
+export type Rank = '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | 'T' | 'J' | 'Q' | 'K' | 'A';
+export type GameType = 'short_deck' | 'regular' | 'omaha' | 'crazy_pineapple';
 
 export interface Card {
   rank: Rank;
   suit: Suit;
 }
 
-export type GameStage = 'waiting' | 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
+export type GameStage = 'waiting' | 'preflop' | 'flop' | 'flop_discard' | 'turn' | 'river' | 'showdown';
 export type RoomStatus = 'waiting' | 'playing' | 'finished';
-export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'allin';
+export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'allin' | 'discard';
 
 export interface PlayerState {
   id: string;
@@ -29,7 +30,7 @@ export interface PlayerState {
   isConnected: boolean;
   seatIndex: number;
   revealedMask?: number; // bitmask: 1=left card, 2=right card
-  revealedCount?: number; // public revealed hole card count (0-2) at showdown
+  revealedCount?: number; // public revealed hole card count at showdown
   runItTwiceHandNamesZh?: string[]; // [run1, run2] labels when run-it-twice is used
   handResult?: HandResult; // populated at showdown
 }
@@ -44,6 +45,14 @@ export interface HandResult {
 
 export interface GameState {
   roomId: string;
+  gameType?: GameType;
+  bombPot?: {
+    enabled: boolean;
+    active: boolean;
+    amount: number;
+    interval: number;
+    handsUntilNext: number;
+  };
   handNumber: number;
   stage: GameStage;
   communityCards: Card[];
@@ -68,7 +77,7 @@ export interface RunItTwiceState {
   votes: Record<string, boolean | null>;
   boards?: [Card[], Card[]];
   summary?: Array<{ name: string; handLabel: string }>;
-  runResults?: Array<{ names: string[]; handLabel: string }>;
+  runResults?: Array<{ playerIds?: string[]; names: string[]; handLabel: string }>;
   baseStage?: GameStage;
   phase?: 'run1' | 'run1_showdown' | 'run2' | 'run2_showdown' | 'final';
 }
@@ -85,17 +94,21 @@ export interface WinnerInfo {
 export interface ActionLogEntry {
   playerId: string;
   playerName: string;
-  action: ActionType | 'blind_small' | 'blind_big' | 'deal';
+  action: ActionType | 'blind_small' | 'blind_big' | 'deal' | 'bomb_ante';
   amount?: number;
   timestamp: number;
 }
 
 export interface RoomSettings {
+  gameType: GameType;
   startingChips: number;
   smallBlind: number;
   bigBlind: number;
   maxPlayers: number;
   actionTimeout: number; // seconds
+  bombPotEnabled: boolean;
+  bombPotAmount: number;
+  bombPotInterval: number;
 }
 
 export interface Room {
@@ -136,6 +149,10 @@ export interface ClientToServerEvents {
   'room:add_bot': (cb: (res: { success: boolean }) => void) => void;
   'room:host_manage_player': (
     payload: { targetPlayerId: string; action: 'set_chips' | 'kick'; chips?: number },
+    cb: (res: { success: boolean; error?: string }) => void
+  ) => void;
+  'room:update_settings': (
+    payload: { settings: Partial<Pick<RoomSettings, 'bombPotEnabled' | 'bombPotAmount' | 'bombPotInterval'>> },
     cb: (res: { success: boolean; error?: string }) => void
   ) => void;
   'player:away': (payload: { away: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
