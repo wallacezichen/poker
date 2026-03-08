@@ -1,5 +1,4 @@
 'use client';
-import { useEffect, useRouter } from 'next/navigation';
 import { Suspense } from 'react';
 import LobbyPage from './_lobby';
 
