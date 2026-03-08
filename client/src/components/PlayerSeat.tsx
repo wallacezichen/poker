@@ -41,7 +41,8 @@ export default function PlayerSeat({
     displayCards = [undefined, undefined];
   }
   const liveBest = isMe ? evaluateBestHandName([...player.holeCards, ...communityCards]) : '';
-  const handLabel = player.handResult?.name?.toUpperCase() || player.handResult?.nameZh || liveBest;
+  const handLabel = player.handResult ? formatHandLabelEnDetailed(player.handResult) : liveBest;
+  const runItTwiceLabels = player.runItTwiceHandNamesZh;
 
   return (
     <div className={clsx('relative select-none', player.folded && 'opacity-45')}>
@@ -125,9 +126,15 @@ export default function PlayerSeat({
         </div>
       </div>
 
-      {handLabel && !player.folded && (
+      {handLabel && !runItTwiceLabels && !player.folded && (
         <div className="mt-1 text-center text-[0.95rem] font-semibold text-amber-200 tracking-wide">
           {handLabel}
+        </div>
+      )}
+      {runItTwiceLabels && runItTwiceLabels.length === 2 && !player.folded && (
+        <div className="mt-1 text-center text-[0.85rem] font-semibold text-yellow-200 tracking-wide leading-tight">
+          <div>{runItTwiceLabels[0]}</div>
+          <div>{runItTwiceLabels[1]}</div>
         </div>
       )}
       {statusText && (
@@ -138,6 +145,44 @@ export default function PlayerSeat({
 
     </div>
   );
+}
+
+function valueToRank(v: number): string {
+  if (v === 14) return 'A';
+  if (v === 13) return 'K';
+  if (v === 12) return 'Q';
+  if (v === 11) return 'J';
+  if (v === 10) return '10';
+  return String(v);
+}
+
+function rankWord(v: number): string {
+  const r = valueToRank(v);
+  if (r === 'A') return 'Aces';
+  if (r === 'K') return 'Kings';
+  if (r === 'Q') return 'Queens';
+  if (r === 'J') return 'Jacks';
+  if (r === '10') return 'Tens';
+  return `${r}s`;
+}
+
+function formatHandLabelEnDetailed(result: NonNullable<PlayerState['handResult']>): string {
+  if (result.rank >= 4) return result.name;
+  if (result.rank === 3) {
+    const trip = Math.floor((result.tiebreak[0] || 0) / 100);
+    return `Set of ${rankWord(trip)}`;
+  }
+  if (result.rank === 2) {
+    const p1 = Math.floor((result.tiebreak[0] || 0) / 100);
+    const p2 = Math.floor((result.tiebreak[1] || 0) / 100);
+    return `Two Pair(${rankWord(p1)}, ${rankWord(p2)})`;
+  }
+  if (result.rank === 1) {
+    const p = Math.floor((result.tiebreak[0] || 0) / 100);
+    return `One Pair(${rankWord(p)})`;
+  }
+  const hi = result.tiebreak[0] || 0;
+  return `${valueToRank(hi)}-high`;
 }
 
 function evaluateBestHandName(cards: CardType[]): string {

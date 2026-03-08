@@ -31,6 +31,52 @@ function cardShortLabel(card?: { rank: string; suit: string }): string {
   return `${rank}${card.suit}`;
 }
 
+function valueToRank(v: number): string {
+  if (v === 14) return 'A';
+  if (v === 13) return 'K';
+  if (v === 12) return 'Q';
+  if (v === 11) return 'J';
+  if (v === 10) return '10';
+  return String(v);
+}
+
+function rankWord(v: number): string {
+  const r = valueToRank(v);
+  if (r === 'A') return 'Aces';
+  if (r === 'K') return 'Kings';
+  if (r === 'Q') return 'Queens';
+  if (r === 'J') return 'Jacks';
+  if (r === '10') return 'Tens';
+  return `${r}s`;
+}
+
+function formatHandLabelEnDetailed(result?: { rank: number; name: string; tiebreak: number[] }): string {
+  if (!result) return '';
+  if (result.rank >= 4) return result.name;
+  if (result.rank === 3) {
+    const trip = Math.floor((result.tiebreak[0] || 0) / 100);
+    return `Set of ${rankWord(trip)}`;
+  }
+  if (result.rank === 2) {
+    const p1 = Math.floor((result.tiebreak[0] || 0) / 100);
+    const p2 = Math.floor((result.tiebreak[1] || 0) / 100);
+    return `Two Pair(${rankWord(p1)}, ${rankWord(p2)})`;
+  }
+  if (result.rank === 1) {
+    const p = Math.floor((result.tiebreak[0] || 0) / 100);
+    return `One Pair(${rankWord(p)})`;
+  }
+  const hi = result.tiebreak[0] || 0;
+  return `${valueToRank(hi)}-high`;
+}
+
+function communityCountForStage(stage?: GameState['stage']): number {
+  if (stage === 'flop') return 3;
+  if (stage === 'turn') return 4;
+  if (stage === 'river' || stage === 'showdown') return 5;
+  return 0;
+}
+
 interface GameTableProps {
   gameState: GameState;
   room: Room;
@@ -43,12 +89,13 @@ interface GameTableProps {
   onSetPause: (paused: boolean) => void;
   onNextHand: () => void;
   onRevealCards: (count: 1 | 2) => void;
+  onRunItTwiceVote: (agree: boolean) => void;
   onLeave: () => void;
 }
 
 export default function GameTable({
   gameState, room, myPlayerId,
-  onAction, onSendChat, onSetAway, onJoinRequestDecision, onHostManagePlayer, onSetPause, onNextHand, onRevealCards, onLeave
+  onAction, onSendChat, onSetAway, onJoinRequestDecision, onHostManagePlayer, onSetPause, onNextHand, onRevealCards, onRunItTwiceVote, onLeave
 }: GameTableProps) {
   const {
     chatMessages, joinRequests,
@@ -109,6 +156,23 @@ export default function GameTable({
   const isHost = room.hostId === myPlayerId;
   const manageTarget = manageTargetId ? room.players.find((p) => p.id === manageTargetId) : undefined;
   const myRevealMask = myPlayer?.revealedMask ?? 0;
+  const runItTwice = gameState.runItTwice;
+  const myRunItTwiceVote = runItTwice?.votes?.[myPlayerId] ?? null;
+  const showRunItTwicePanel = runItTwice?.status === 'pending' && myPlayerId in (runItTwice?.votes || {});
+  const showdownPlayers = gameState.players.filter((p) => !p.folded && !!p.handResult);
+  const showBothRunBoards =
+    runItTwice?.status === 'agreed' &&
+    (runItTwice.phase === 'run2' || runItTwice.phase === 'run2_showdown' || runItTwice.phase === 'final') &&
+    !!runItTwice.boards?.[0];
+  const sharedStreetCount = communityCountForStage(runItTwice?.baseStage);
+  const visibleStreetCount = communityCountForStage(gameState.stage);
+  const newStreetIndices = Array.from(
+    { length: Math.max(0, visibleStreetCount - sharedStreetCount) },
+    (_, idx) => sharedStreetCount + idx
+  );
+  const showPreflopRunGrid = showBothRunBoards && sharedStreetCount === 0;
+  const showFlopRunGrid = showBothRunBoards && sharedStreetCount === 3;
+  const showTurnRunGrid = showBothRunBoards && sharedStreetCount === 4;
 
   useEffect(() => {
     if (!handResult?.winners?.length) return;
@@ -396,11 +460,10 @@ export default function GameTable({
               boxShadow: '0 18px 50px rgba(0,0,0,0.55), inset 0 0 0 2px rgba(255,255,255,0.06)',
             }}
           >
-            Dealer avatar
-            {/* <div className="absolute top-[22%] left-[35%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1">
+            <div className="absolute top-[34%] left-[24%] -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1">
               <div
                 className="aspect-square rounded-xl overflow-hidden border border-white/45 shadow-[0_8px_22px_rgba(0,0,0,0.45)] bg-black/25"
-                style={{ width: '15.5%' }}
+                style={{ width: '11.5%', minWidth: '68px', maxWidth: '132px' }}
               >
                 <img
                   src="/dealer-avatar.webp"
@@ -408,7 +471,7 @@ export default function GameTable({
                   className="w-full h-full object-cover"
                 />
               </div>
-            </div> */}
+            </div>
 
             {/* Community cards + pot */}
             <div className="absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
@@ -416,22 +479,162 @@ export default function GameTable({
                 {formatChips(gameState.pot)}
               </div>
 
-              <div className="flex gap-2.5 mt-1">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <Card
-                    key={i}
-                    card={gameState.communityCards[i]}
-                    faceDown={false}
-                    size="xl"
-                    index={i}
-                  />
-                ))}
-              </div>
+              {showBothRunBoards && showPreflopRunGrid ? (
+                <div className="mt-1 flex flex-col items-center gap-2">
+                  <div className="flex gap-2.5">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Card
+                        key={`run1-${i}`}
+                        card={runItTwice?.boards?.[0]?.[i]}
+                        faceDown={false}
+                        size="xl"
+                        index={i}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex gap-2.5">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Card
+                        key={`run2-${i}`}
+                        card={gameState.communityCards[i]}
+                        faceDown={false}
+                        size="xl"
+                        index={i}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : showBothRunBoards && showFlopRunGrid ? (
+                <div className="mt-1 flex flex-col items-center gap-2">
+                  <div className="flex gap-2.5">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Card
+                        key={`run1-${i}`}
+                        card={runItTwice?.boards?.[0]?.[i]}
+                        faceDown={false}
+                        size="xl"
+                        index={i}
+                      />
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-5 gap-2.5">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Card
+                        key={`run2-${i}`}
+                        card={i >= 3 ? gameState.communityCards[i] : undefined}
+                        faceDown={false}
+                        size="xl"
+                        index={i}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : showBothRunBoards && showTurnRunGrid ? (
+                <div className="mt-1 flex flex-col items-center gap-2">
+                  <div className="flex gap-2.5">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Card
+                        key={`run1-${i}`}
+                        card={runItTwice?.boards?.[0]?.[i]}
+                        faceDown={false}
+                        size="xl"
+                        index={i}
+                      />
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-5 gap-2.5">
+                    {Array.from({ length: 5 }).map((_, i) => (
+                      <Card
+                        key={`run2-slot-${i}`}
+                        card={i === 4 ? gameState.communityCards[4] : undefined}
+                        faceDown={false}
+                        size="xl"
+                        index={i}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : showBothRunBoards ? (
+                <div className="mt-1 flex flex-col items-center gap-2">
+                  {sharedStreetCount > 0 && (
+                    <div className="flex gap-2.5">
+                      {Array.from({ length: sharedStreetCount }).map((_, i) => (
+                        <Card
+                          key={`shared-${i}`}
+                          card={runItTwice?.boards?.[0]?.[i]}
+                          faceDown={false}
+                          size="xl"
+                          index={i}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {newStreetIndices.length > 0 && (
+                    <div className="flex items-center gap-4">
+                      {newStreetIndices.map((i) => (
+                        <div key={`pair-${i}`} className="flex items-center gap-2.5">
+                          <Card
+                            key={`run1-${i}`}
+                            card={runItTwice?.boards?.[0]?.[i]}
+                            faceDown={false}
+                            size="xl"
+                            index={i}
+                          />
+                          <Card
+                            key={`run2-${i}`}
+                            card={gameState.communityCards[i]}
+                            faceDown={false}
+                            size="xl"
+                            index={i}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {newStreetIndices.length === 0 && (
+                    <div className="flex gap-2.5">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <Card
+                          key={`run2-${i}`}
+                          card={i < sharedStreetCount ? undefined : gameState.communityCards[i]}
+                          faceDown={false}
+                          size="xl"
+                          index={i}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex gap-2.5 mt-1">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <Card
+                      key={i}
+                      card={gameState.communityCards[i]}
+                      faceDown={false}
+                      size="xl"
+                      index={i}
+                    />
+                  ))}
+                </div>
+              )}
 
               {showHandResult && handResult && (
                 <div className="mt-3 flex flex-col items-center gap-2">
-                  <div className="text-sm text-yellow-200 bg-black/30 rounded-full px-4 py-1 border border-yellow-300/30">
-                    {handResult.winners.map(w => `${w.name} · ${w.handNameZh}`).join('  /  ')}
+                  <div className="text-sm text-yellow-200 bg-black/30 rounded-xl px-4 py-2 border border-yellow-300/30 leading-tight">
+                    {runItTwice?.summary?.length ? (
+                      runItTwice.summary.map((item, idx) => (
+                        <div key={`${item.name}-${idx}`}>
+                          {item.name}: {item.handLabel}
+                        </div>
+                      ))
+                    ) : (
+                      showdownPlayers.slice(0, 2).map((p) => (
+                        <div key={p.id}>
+                          {p.name}: {formatHandLabelEnDetailed(p.handResult)}
+                        </div>
+                      ))
+                    )}
                   </div>
                   <button
                     onClick={() => {
@@ -546,6 +749,37 @@ export default function GameTable({
         </div>
 
         <div className="absolute bottom-2 right-2 md:right-3 z-20 flex flex-col items-end gap-2 w-[560px] max-w-[calc(100vw-16px)]">
+          {showRunItTwicePanel && (
+            <div className="w-[312px] rounded-xl overflow-hidden border-[3px] border-white/25 bg-[#121722]/92 shadow-[0_10px_24px_rgba(0,0,0,0.35)]">
+              <div className="px-3 pt-4 pb-3 text-center font-extrabold tracking-wide text-[1.35rem] leading-none text-white">
+                RUN IT TWICE?
+              </div>
+              <div className="grid grid-cols-2 border-t border-white/20">
+                <button
+                  onClick={() => onRunItTwiceVote(true)}
+                  disabled={myRunItTwiceVote !== null}
+                  className={clsx(
+                    'px-3 py-3 font-extrabold text-[1.7rem] border-r border-white/20 transition-colors',
+                    myRunItTwiceVote === true ? 'bg-emerald-600 text-white' : 'bg-emerald-700/85 text-white hover:bg-emerald-600',
+                    myRunItTwiceVote !== null && myRunItTwiceVote !== true && 'opacity-50 cursor-not-allowed'
+                  )}
+                >
+                  YES
+                </button>
+                <button
+                  onClick={() => onRunItTwiceVote(false)}
+                  disabled={myRunItTwiceVote !== null}
+                  className={clsx(
+                    'px-3 py-3 font-extrabold text-[1.7rem] transition-colors',
+                    myRunItTwiceVote === false ? 'bg-rose-600 text-white' : 'bg-rose-700/90 text-white hover:bg-rose-600',
+                    myRunItTwiceVote !== null && myRunItTwiceVote !== false && 'opacity-50 cursor-not-allowed'
+                  )}
+                >
+                  NO
+                </button>
+              </div>
+            </div>
+          )}
           {(showHandResult || gameState.stage === 'showdown') && myPlayer && (
             <div
               className={clsx(

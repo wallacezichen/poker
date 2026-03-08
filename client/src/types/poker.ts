@@ -28,6 +28,7 @@ export interface PlayerState {
   seatIndex: number;
   revealedMask?: number; // bitmask: 1=left card, 2=right card
   revealedCount?: number;
+  runItTwiceHandNamesZh?: string[];
   handResult?: HandResult;
 }
 
@@ -54,9 +55,19 @@ export interface GameState {
   currentPlayerIndex: number;
   lastRaiseIndex: number;
   lastRaiseSize?: number;
+  runItTwice?: RunItTwiceState;
   players: PlayerState[];
   winners?: WinnerInfo[];
   actionLog: ActionLogEntry[];
+}
+
+export interface RunItTwiceState {
+  status: 'pending' | 'agreed' | 'declined';
+  votes: Record<string, boolean | null>;
+  boards?: [Card[], Card[]];
+  summary?: Array<{ name: string; handLabel: string }>;
+  baseStage?: GameStage;
+  phase?: 'run1' | 'run1_showdown' | 'run2' | 'run2_showdown' | 'final';
 }
 
 export interface WinnerInfo {
@@ -142,6 +153,7 @@ export interface ClientToServerEvents {
   'game:pause': (payload: { paused: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:start': (cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:reveal_cards': (payload: { slot: 1 | 2 }, cb: (res: { success: boolean; error?: string }) => void) => void;
+  'game:run_it_twice_vote': (payload: { agree: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:action': (payload: { action: ActionType; amount?: number }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'chat:send': (payload: { message: string }) => void;
   'game:next_hand': () => void;

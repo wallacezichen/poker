@@ -315,6 +315,12 @@ export function useSocket() {
     });
   }
 
+  function voteRunItTwice(agree: boolean) {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      getSocket().emit('game:run_it_twice_vote', { agree }, (res) => resolve(res));
+    });
+  }
+
   function sendChat(message: string) {
     getSocket().emit('chat:send', { message });
   }
@@ -344,6 +350,7 @@ export function useSocket() {
     startGame,
     performAction,
     revealCards,
+    voteRunItTwice,
     sendChat,
     nextHand,
     leaveRoom,

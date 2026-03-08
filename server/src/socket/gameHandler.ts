@@ -1,7 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
 import { ClientToServerEvents, ServerToClientEvents, RoomSettings, RoomPlayer } from '../types/poker';
-import { initHand, applyAction, sanitizeStateFor, FullGameState } from '../game/engine';
+import { initHand, applyAction, sanitizeStateFor, FullGameState, advanceRunoutStreet } from '../game/engine';
 import { decideBotAction, getBotThinkTime } from '../game/botAI';
 import {
   createRoom, getRoom, updateRoomStatus, upsertPlayer,
@@ -18,6 +18,8 @@ const socketToPlayer = new Map<string, { roomId: string; playerId: string }>();
 const roomSockets = new Map<string, Map<string, string>>();
 // Action timers
 const actionTimers = new Map<string, NodeJS.Timeout>();
+// Delayed board runout timers (all-in suspense reveal)
+const runoutTimers = new Map<string, NodeJS.Timeout>();
 // Map roomId -> players marked away (observer only, skipped in next hands)
 const awayPlayersByRoom = new Map<string, Set<string>>();
 // Room pause state
@@ -373,13 +375,11 @@ export function registerGameHandlers(
           broadcastGameState(io, roomId, newState);
 
           if (newState.stage === 'showdown') {
-            saveHandHistory(newState).catch(console.error);
-            io.to(roomId).emit('game:hand_result', {
-              winners: newState.winners!,
-              players: publicPlayersForShowdown(newState),
-              pot: newState.pot,
-              handNumber: newState.handNumber,
-            });
+            finishShowdown(io, roomId, newState);
+          } else if (maybeStartRunItTwiceOffer(io, roomId, newState)) {
+            // wait for yes/no votes
+          } else if (shouldAutoRunout(newState)) {
+            startDelayedRunout(io, roomId);
           } else {
             scheduleCurrentPlayerAction(io, roomId, newState);
           }
@@ -507,11 +507,13 @@ export function registerGameHandlers(
     if (paused) {
       pausedRooms.add(roomId);
       clearActionTimer(roomId);
+      clearRunoutTimer(roomId);
     } else {
       pausedRooms.delete(roomId);
       const state = activeGames.get(roomId);
       if (state && state.stage !== 'showdown') {
-        scheduleCurrentPlayerAction(io, roomId, state);
+        if (shouldAutoRunout(state)) startDelayedRunout(io, roomId);
+        else scheduleCurrentPlayerAction(io, roomId, state);
       }
     }
 
@@ -554,6 +556,7 @@ export function registerGameHandlers(
 
     await updateRoomStatus(roomId, 'playing');
     pausedRooms.delete(roomId);
+    clearRunoutTimer(roomId);
     io.to(roomId).emit('game:paused', false);
     console.log(`[Socket][game:start] room_status_updated room=${roomId} status=playing elapsedMs=${Date.now() - startedAt}`);
 
@@ -624,6 +627,39 @@ export function registerGameHandlers(
   });
 
   // ============================================================
+  // RUN IT TWICE VOTE (heads-up all-in)
+  // ============================================================
+  socket.on('game:run_it_twice_vote', async ({ agree }, cb) => {
+    const session = socketToPlayer.get(socket.id);
+    if (!session) return cb({ success: false, error: 'Not in a room' });
+    const { roomId, playerId } = session;
+    const state = activeGames.get(roomId);
+    if (!state) return cb({ success: false, error: 'No active game' });
+    if (!state.runItTwice || state.runItTwice.status !== 'pending') {
+      return cb({ success: false, error: 'No pending run-it-twice offer' });
+    }
+    if (!(playerId in state.runItTwice.votes)) {
+      return cb({ success: false, error: 'Not eligible to vote' });
+    }
+
+    state.runItTwice.votes[playerId] = !!agree;
+    const votes = Object.values(state.runItTwice.votes);
+    if (votes.some(v => v === false)) {
+      state.runItTwice.status = 'declined';
+    } else if (votes.every(v => v === true)) {
+      state.runItTwice.status = 'agreed';
+    }
+
+    await saveGameState(state);
+    broadcastGameState(io, roomId, state);
+    cb({ success: true });
+
+    if (state.runItTwice.status !== 'pending') {
+      startDelayedRunout(io, roomId);
+    }
+  });
+
+  // ============================================================
   // PLAYER ACTION
   // ============================================================
   socket.on('game:action', async ({ action, amount }, cb) => {
@@ -652,21 +688,11 @@ export function registerGameHandlers(
     broadcastGameState(io, roomId, newState);
 
     if (newState.stage === 'showdown') {
-      // Save hand history
-      saveHandHistory(newState).catch(console.error);
-      // Update chips in DB
-      for (const p of newState.players) {
-        if (!p.isBot) {
-          updatePlayerChips(roomId, p.id, p.chips).catch(console.error);
-        }
-      }
-      // Emit hand result
-      io.to(roomId).emit('game:hand_result', {
-        winners: newState.winners!,
-        players: publicPlayersForShowdown(newState),
-        pot: newState.pot,
-        handNumber: newState.handNumber,
-      });
+      finishShowdown(io, roomId, newState);
+    } else if (maybeStartRunItTwiceOffer(io, roomId, newState)) {
+      // wait for yes/no votes
+    } else if (shouldAutoRunout(newState)) {
+      startDelayedRunout(io, roomId);
     } else {
       scheduleCurrentPlayerAction(io, roomId, newState);
     }
@@ -721,6 +747,7 @@ export function registerGameHandlers(
         awayPlayersByRoom.delete(roomId);
         pausedRooms.delete(roomId);
         pendingJoinRequestsByRoom.delete(roomId);
+        clearRunoutTimer(roomId);
       }
     }
 
@@ -785,6 +812,90 @@ function publicPlayersForShowdown(state: FullGameState) {
   }));
 }
 
+function shouldAutoRunout(state: FullGameState): boolean {
+  if (state.stage === 'showdown') {
+    const phase = state.runItTwice?.phase;
+    return state.runItTwice?.status === 'agreed' && phase !== 'final';
+  }
+  if (state.runItTwice?.status === 'pending') return false;
+  const remaining = state.players.filter(p => !p.folded);
+  if (remaining.length <= 1) return false;
+  if (state.playersToAct.length > 0) return false;
+  const liveNotAllIn = remaining.filter(p => !p.allIn).length;
+  return liveNotAllIn <= 1;
+}
+
+function isRunItTwiceEligible(state: FullGameState): boolean {
+  if (state.stage === 'showdown') return false;
+  if (state.playersToAct.length > 0) return false;
+  const remaining = state.players.filter(p => !p.folded);
+  if (remaining.length !== 2) return false;
+  if (!remaining.some(p => p.allIn)) return false;
+  if (state.communityCards.length >= 5) return false;
+  return true;
+}
+
+function maybeStartRunItTwiceOffer(io: Server, roomId: string, state: FullGameState): boolean {
+  if (!isRunItTwiceEligible(state)) return false;
+  if (state.runItTwice) return state.runItTwice.status === 'pending';
+
+  const remaining = state.players.filter(p => !p.folded);
+  const votes: Record<string, boolean | null> = {};
+  for (const p of remaining) votes[p.id] = null;
+  state.runItTwice = { status: 'pending', votes };
+  saveGameState(state).catch(console.error);
+  broadcastGameState(io, roomId, state);
+  return true;
+}
+
+function finishShowdown(io: Server, roomId: string, state: FullGameState): void {
+  saveHandHistory(state).catch(console.error);
+  for (const p of state.players) {
+    if (!p.isBot) updatePlayerChips(roomId, p.id, p.chips).catch(console.error);
+  }
+  io.to(roomId).emit('game:hand_result', {
+    winners: state.winners ?? [],
+    players: publicPlayersForShowdown(state),
+    pot: state.pot,
+    handNumber: state.handNumber,
+  });
+}
+
+function startDelayedRunout(
+  io: Server,
+  roomId: string
+): void {
+  if (runoutTimers.has(roomId)) return;
+  if (pausedRooms.has(roomId)) return;
+  const state = activeGames.get(roomId);
+  if (!state || !shouldAutoRunout(state)) return;
+  if (state.runItTwice?.status === 'pending') return;
+
+  const tick = () => {
+    runoutTimers.delete(roomId);
+    const current = activeGames.get(roomId);
+    if (!current) return;
+    if (!shouldAutoRunout(current)) return;
+
+    const next = advanceRunoutStreet(current);
+    activeGames.set(roomId, next);
+    saveGameState(next).catch(console.error);
+    broadcastGameState(io, roomId, next);
+
+    const runItTwiceFinalized = next.runItTwice?.status === 'agreed' && next.runItTwice.phase === 'final';
+    if (next.stage === 'showdown' && (!next.runItTwice || next.runItTwice.status !== 'agreed' || runItTwiceFinalized)) {
+      finishShowdown(io, roomId, next);
+      return;
+    }
+
+    const timer = setTimeout(tick, 3000);
+    runoutTimers.set(roomId, timer);
+  };
+
+  const timer = setTimeout(tick, 3000);
+  runoutTimers.set(roomId, timer);
+}
+
 function scheduleCurrentPlayerAction(
   io: Server,
   roomId: string,
@@ -816,13 +927,11 @@ function scheduleCurrentPlayerAction(
       broadcastGameState(io, roomId, newState);
 
       if (newState.stage === 'showdown') {
-        saveHandHistory(newState).catch(console.error);
-        io.to(roomId).emit('game:hand_result', {
-          winners: newState.winners!,
-          players: publicPlayersForShowdown(newState),
-          pot: newState.pot,
-          handNumber: newState.handNumber,
-        });
+        finishShowdown(io, roomId, newState);
+      } else if (maybeStartRunItTwiceOffer(io, roomId, newState)) {
+        // wait for yes/no votes
+      } else if (shouldAutoRunout(newState)) {
+        startDelayedRunout(io, roomId);
       } else {
         scheduleCurrentPlayerAction(io, roomId, newState);
       }
@@ -840,8 +949,17 @@ function clearActionTimer(roomId: string) {
   if (t) { clearTimeout(t); actionTimers.delete(roomId); }
 }
 
+function clearRunoutTimer(roomId: string) {
+  const t = runoutTimers.get(roomId);
+  if (t) {
+    clearTimeout(t);
+    runoutTimers.delete(roomId);
+  }
+}
+
 async function startNextHand(io: Server, roomId: string) {
   if (pausedRooms.has(roomId)) return;
+  clearRunoutTimer(roomId);
   const roomData = await getRoom(roomId);
   if (!roomData) return;
 

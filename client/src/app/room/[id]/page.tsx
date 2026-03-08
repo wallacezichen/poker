@@ -14,7 +14,7 @@ export default function RoomPage() {
 
   const {
     startGame, addBot, performAction, sendChat, nextHand,
-    leaveRoom, joinRoom, resumeRoom, setAway, setPause, decideJoinRequest, hostManagePlayer, revealCards,
+    leaveRoom, joinRoom, resumeRoom, setAway, setPause, decideJoinRequest, hostManagePlayer, revealCards, voteRunItTwice,
   } = useSocket();
   const { room, gameState, myPlayerId, isConnected, joinPending, setJoinPending } = useGameStore();
 
@@ -105,6 +105,11 @@ export default function RoomPage() {
   async function handleRevealCards(count: 1 | 2) {
     const res = await revealCards(count);
     if (!res.success) alert(res.error || 'Reveal failed');
+  }
+
+  async function handleRunItTwiceVote(agree: boolean) {
+    const res = await voteRunItTwice(agree);
+    if (!res.success) alert(res.error || 'Vote failed');
   }
 
   // Loading state
@@ -244,6 +249,7 @@ export default function RoomPage() {
       onSetPause={handleSetPause}
       onNextHand={nextHand}
       onRevealCards={handleRevealCards}
+      onRunItTwiceVote={handleRunItTwiceVote}
       onLeave={handleLeave}
     />
   );
