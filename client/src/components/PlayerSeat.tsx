@@ -177,9 +177,9 @@ function evaluate5Rank(cards: CardType[]): number {
   const suits = cards.map(c => c.suit);
   const counts = new Map<number, number>();
   values.forEach(v => counts.set(v, (counts.get(v) || 0) + 1));
-  const freq = [...counts.values()].sort((a, b) => b - a);
+  const freq = Array.from(counts.values()).sort((a, b) => b - a);
   const isFlush = new Set(suits).size === 1;
-  const unique = [...new Set(values)].sort((a, b) => a - b);
+  const unique = Array.from(new Set(values)).sort((a, b) => a - b);
   const isWheel = [6, 7, 8, 9, 14].every(v => unique.includes(v));
   let isStraight = isWheel;
   let high = isWheel ? 9 : 0;
