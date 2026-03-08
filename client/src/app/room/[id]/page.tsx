@@ -19,7 +19,7 @@ const GAME_THEME: Record<GameType, { bg: string; panel: string; badge: string; l
     bg: 'radial-gradient(ellipse at center, #132651 0%, #070c1a 100%)',
     panel: 'bg-sky-950/25 border border-sky-300/30',
     badge: 'bg-gradient-to-r from-sky-200 to-cyan-100 text-sky-900',
-    label: '常规德州',
+    label: '德州扑克',
   },
   omaha: {
     bg: 'radial-gradient(ellipse at center, #4f2a11 0%, #140903 100%)',

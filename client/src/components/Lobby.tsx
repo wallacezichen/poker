@@ -40,8 +40,8 @@ const GAME_THEME: Record<GameType, {
     activePill: 'bg-gold/85 text-black border-gold',
   },
   regular: {
-    title: '常规德州',
-    subtitle: "Regular Texas Hold'em",
+    title: '德州扑克',
+    subtitle: "Texas Hold'em Poker",
     badge: '52',
     pageBg: 'radial-gradient(ellipse at center, #132651 0%, #050814 100%)',
     cardBg: 'bg-sky-950/30 border-sky-300/30',
@@ -56,7 +56,7 @@ const GAME_THEME: Record<GameType, {
     activePill: 'bg-amber-200 text-amber-950 border-amber-100',
   },
   crazy_pineapple: {
-    title: 'Crazy Pineapple',
+    title: '疯狂大菠萝',
     subtitle: "Hold'em with Flop Discard",
     badge: 'PINE',
     pageBg: 'radial-gradient(ellipse at center, #3f0f2f 0%, #14060f 100%)',
