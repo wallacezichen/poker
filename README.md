@@ -8,7 +8,7 @@ Create your first game room: https://poker-omega-blue.vercel.app/
 | Layer | Technology |
 |-------|-----------|
 | Frontend | Next.js 14 (App Router, TypeScript) |
-| Backend | Node.js + Express + Socket.IO |
+| Backend | Node.js + Express + Socket.IO | 
 | Database | Supabase (PostgreSQL, free tier) |
 | Real-time | WebSockets via Socket.IO |
 
