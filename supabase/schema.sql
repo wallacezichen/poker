@@ -19,7 +19,12 @@ create table if not exists rooms (
     "smallBlind": 50,
     "bigBlind": 100,
     "maxPlayers": 9,
-    "actionTimeout": 30
+    "actionTimeout": 30,
+    "bombPotEnabled": false,
+    "bombPotAmount": 100,
+    "bombPotInterval": 5,
+    "twoSevenEnabled": false,
+    "twoSevenAmount": 100
   }',
   created_at    timestamptz default now(),
   updated_at    timestamptz default now(),

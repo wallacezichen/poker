@@ -304,6 +304,13 @@ export function initHand(
 ): FullGameState {
   const deck = createDeck(settings.gameType ?? 'short_deck');
   const activePlayers = players.filter(p => p.chips > 0 && p.isConnected);
+  const bombEnabled = !!settings.bombPotEnabled;
+  const bombInterval = Math.max(1, Math.floor(settings.bombPotInterval || 1));
+  const bombAmount = Math.max(1, Math.floor(settings.bombPotAmount || settings.bigBlind || 1));
+  const isBombPotHand = bombEnabled && (handNumber % bombInterval === 0);
+  const handsUntilNextBomb = bombEnabled
+    ? (isBombPotHand ? 0 : (bombInterval - (handNumber % bombInterval)))
+    : -1;
 
   const playerStates: PlayerState[] = activePlayers.map((p, i) => ({
     id: p.id,
@@ -332,20 +339,27 @@ export function initHand(
   const state: FullGameState = {
     roomId,
     gameType: settings.gameType ?? 'short_deck',
+    bombPot: {
+      enabled: bombEnabled,
+      active: isBombPotHand,
+      amount: bombAmount,
+      interval: bombInterval,
+      handsUntilNext: handsUntilNextBomb,
+    },
     handNumber,
-    stage: 'preflop',
+    stage: isBombPotHand ? 'flop' : 'preflop',
     communityCards: [],
     deck,
     deckIndex: 0,
     pot: 0,
-    currentBet: settings.bigBlind,
+    currentBet: isBombPotHand ? 0 : settings.bigBlind,
     smallBlind: settings.smallBlind,
     bigBlind: settings.bigBlind,
     dealerIndex: safeDealer,
     smallBlindIndex: sbIdx,
     bigBlindIndex: bbIdx,
     currentPlayerIndex: headsUp ? sbIdx : ((bbIdx + 1) % n),
-    lastRaiseIndex: bbIdx,
+    lastRaiseIndex: isBombPotHand ? -1 : bbIdx,
     lastRaiseSize: settings.bigBlind,
     runItTwice: undefined,
     players: playerStates,
@@ -360,34 +374,73 @@ export function initHand(
     }
   }
 
-  // Post small blind
-  const sb = state.players[sbIdx];
-  const sbAmt = Math.min(settings.smallBlind, sb.chips);
-  sb.chips -= sbAmt;
-  sb.bet = sbAmt;
-  sb.totalBet = sbAmt;
-  state.pot += sbAmt;
-  if (sb.chips === 0) sb.allIn = true;
-  state.actionLog.push({
-    playerId: sb.id, playerName: sb.name,
-    action: 'blind_small', amount: sbAmt, timestamp: Date.now(),
-  });
+  if (isBombPotHand) {
+    for (const p of state.players) {
+      const ante = Math.min(bombAmount, p.chips);
+      p.chips -= ante;
+      p.bet = ante;
+      p.totalBet = ante;
+      state.pot += ante;
+      if (p.chips === 0) p.allIn = true;
+      state.actionLog.push({
+        playerId: p.id,
+        playerName: p.name,
+        action: 'bomb_ante',
+        amount: ante,
+        timestamp: Date.now(),
+      });
+    }
+    // Skip preflop and deal flop immediately.
+    state.communityCards.push(dealCard(state), dealCard(state), dealCard(state));
+    for (const p of state.players) p.bet = 0;
+    state.currentBet = 0;
+    state.lastRaiseIndex = -1;
+    state.lastRaiseSize = state.bigBlind;
+    if (countLiveNotAllIn(state) <= 1) {
+      state.playersToAct = [];
+      state.currentPlayerIndex = -1;
+    } else {
+      // Bomb pot action starts from SB seat.
+      const nPlayers = state.players.length;
+      let first = state.smallBlindIndex;
+      let tries = 0;
+      while (tries < nPlayers && (state.players[first].folded || state.players[first].allIn)) {
+        first = (first + 1) % nPlayers;
+        tries++;
+      }
+      state.currentPlayerIndex = first;
+      setPlayersToActAll(state);
+    }
+  } else {
+    // Post small blind
+    const sb = state.players[sbIdx];
+    const sbAmt = Math.min(settings.smallBlind, sb.chips);
+    sb.chips -= sbAmt;
+    sb.bet = sbAmt;
+    sb.totalBet = sbAmt;
+    state.pot += sbAmt;
+    if (sb.chips === 0) sb.allIn = true;
+    state.actionLog.push({
+      playerId: sb.id, playerName: sb.name,
+      action: 'blind_small', amount: sbAmt, timestamp: Date.now(),
+    });
 
-  // Post big blind
-  const bb = state.players[bbIdx];
-  const bbAmt = Math.min(settings.bigBlind, bb.chips);
-  bb.chips -= bbAmt;
-  bb.bet = bbAmt;
-  bb.totalBet = bbAmt;
-  state.pot += bbAmt;
-  if (bb.chips === 0) bb.allIn = true;
-  state.actionLog.push({
-    playerId: bb.id, playerName: bb.name,
-    action: 'blind_big', amount: bbAmt, timestamp: Date.now(),
-  });
+    // Post big blind
+    const bb = state.players[bbIdx];
+    const bbAmt = Math.min(settings.bigBlind, bb.chips);
+    bb.chips -= bbAmt;
+    bb.bet = bbAmt;
+    bb.totalBet = bbAmt;
+    state.pot += bbAmt;
+    if (bb.chips === 0) bb.allIn = true;
+    state.actionLog.push({
+      playerId: bb.id, playerName: bb.name,
+      action: 'blind_big', amount: bbAmt, timestamp: Date.now(),
+    });
 
-  // Everyone owes one preflop action, including BB (BB can check/raise when unopened)
-  setPlayersToActAll(state);
+    // Everyone owes one preflop action, including BB (BB can check/raise when unopened)
+    setPlayersToActAll(state);
+  }
 
   return state;
 }

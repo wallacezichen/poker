@@ -68,12 +68,13 @@ const GAME_THEME: Record<GameType, {
 export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRoomId }: LobbyProps) {
   const [playerName, setPlayerName] = useState('');
   const [joinCode, setJoinCode] = useState(initialRoomId || '');
-  const [gameType, setGameType] = useState<GameType>('short_deck');
+  const [gameType, setGameType] = useState<GameType>('regular');
   const [startingChips, setStartingChips] = useState(1000);
   const [blindIdx, setBlindIdx] = useState(0); // 5/10
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showCreateSettings, setShowCreateSettings] = useState(false);
+  const [showModeInfo, setShowModeInfo] = useState(false);
 
   async function handleCreate() {
     if (!playerName.trim()) { setError('请输入昵称'); return; }
@@ -140,17 +141,29 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
         {/* Create Room */}
         <div className="mb-3">
           <div className="mb-3">
-            <label className="text-xs text-white/40 uppercase tracking-widest block mb-2">游戏模式</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-xs text-white/40 uppercase tracking-widest block">游戏模式</label>
               <button
-                onClick={() => setGameType('short_deck')}
-                className={clsx(
-                  'px-3 py-2.5 rounded-xl text-sm border transition-all',
-                  gameType === 'short_deck' ? GAME_THEME.short_deck.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
-                )}
+                type="button"
+                onClick={() => setShowModeInfo((v) => !v)}
+                className="w-5 h-5 rounded-full border border-white/35 text-white/70 text-xs font-bold leading-none hover:bg-white/10"
+                aria-label="Game mode info"
               >
-                短牌 (6+) <span className="text-xs opacity-75">36张牌</span>
+                i
               </button>
+            </div>
+            {showModeInfo && (
+              <div className="mb-2 rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-xs text-white/75">
+                {gameType === 'short_deck'
+                  ? '短牌：把牌堆里的 2–5全部移除，只用6到A共36张牌，同花大于葫芦，A-6-7-8-9算最小顺子'
+                  : gameType === 'regular'
+                    ? "德州扑克：标准 52 张牌规则."
+                    : gameType === 'omaha'
+                      ? '奥马哈：每个玩家发 4张手牌，最终必须 用其中恰好2张手牌 + 3张公共牌 组成最佳五张牌。'
+                      : '疯狂大菠萝：每人先发 3 张手牌，翻牌后必须弃 1 张。'}
+              </div>
+            )}
+            <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setGameType('regular')}
                 className={clsx(
@@ -158,7 +171,16 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                   gameType === 'regular' ? GAME_THEME.regular.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
                 )}
               >
-                常规 (52) <span className="text-xs opacity-75">52张牌</span>
+                德州扑克
+              </button>
+              <button
+                onClick={() => setGameType('short_deck')}
+                className={clsx(
+                  'px-3 py-2.5 rounded-xl text-sm border transition-all',
+                  gameType === 'short_deck' ? GAME_THEME.short_deck.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
+                )}
+              >
+                短牌
               </button>
               <button
                 onClick={() => setGameType('omaha')}
@@ -167,7 +189,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                   gameType === 'omaha' ? GAME_THEME.omaha.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
                 )}
               >
-                Omaha <span className="text-xs opacity-75">4手牌</span>
+                奥马哈
               </button>
               <button
                 onClick={() => setGameType('crazy_pineapple')}
@@ -176,19 +198,8 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                   gameType === 'crazy_pineapple' ? GAME_THEME.crazy_pineapple.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
                 )}
               >
-                Crazy Pineapple <span className="text-xs opacity-75">3手牌翻牌后弃1</span>
+                疯狂大菠萝
               </button>
-            </div>
-            <div className="mt-2 text-xs text-white/45">
-              当前：{theme.badge} · {
-                gameType === 'short_deck'
-                  ? '同花大于葫芦；A-6-7-8-9最小顺子'
-                  : gameType === 'regular'
-                    ? '标准德州规则；A-2-3-4-5最小顺子'
-                    : gameType === 'omaha'
-                      ? '每人4张手牌；必须用2张手牌+3张公牌'
-                      : '每人3张手牌；翻牌圈结束后必须弃1张'
-              }
             </div>
           </div>
 

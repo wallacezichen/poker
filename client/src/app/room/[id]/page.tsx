@@ -42,7 +42,7 @@ export default function RoomPage() {
 
   const {
     startGame, addBot, performAction, sendChat, nextHand,
-    leaveRoom, joinRoom, resumeRoom, setAway, setPause, decideJoinRequest, hostManagePlayer, revealCards, voteRunItTwice, respondRebuy,
+    leaveRoom, joinRoom, resumeRoom, setAway, setPause, decideJoinRequest, hostManagePlayer, updateRoomSettings, revealCards, voteRunItTwice, respondRebuy,
   } = useSocket();
   const { room, gameState, myPlayerId, isConnected, joinPending, setJoinPending, rebuyPrompt, setRebuyPrompt } = useGameStore();
 
@@ -153,6 +153,10 @@ export default function RoomPage() {
   async function handleHostManagePlayer(targetPlayerId: string, action: 'set_chips' | 'kick', chips?: number) {
     const res = await hostManagePlayer(targetPlayerId, action, chips);
     return res;
+  }
+
+  async function handleUpdateRoomSettings(settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number }>) {
+    return updateRoomSettings(settings);
   }
 
   async function handleRevealCards(count: 1 | 2) {
@@ -352,6 +356,7 @@ export default function RoomPage() {
         onSetAway={handleSetAway}
         onJoinRequestDecision={handleJoinRequestDecision}
         onHostManagePlayer={handleHostManagePlayer}
+        onUpdateRoomSettings={handleUpdateRoomSettings}
         onSetPause={handleSetPause}
         onNextHand={nextHand}
         onRevealCards={handleRevealCards}

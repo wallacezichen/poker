@@ -1,11 +1,12 @@
 'use client';
 
-type SfxKey = 'deal' | 'bet' | 'reveal' | 'winner';
+type SfxKey = 'deal' | 'bet' | 'reveal' | 'tap' | 'winner';
 
 const SFX: Record<SfxKey, { src: string; volume: number }> = {
   deal: { src: '/sfx/card-flip.mp3', volume: 0.4 },
   bet: { src: '/sfx/chip.mp3', volume: 0.45 },
-  reveal: { src: '/sfx/tap.mp3', volume: 0.38 },
+  reveal: { src: '/sfx/card-flip.mp3', volume: 0.56 },
+  tap: { src: '/sfx/tap.mp3', volume: 0.34 },
   winner: { src: '/sfx/winner.mp3', volume: 0.5 },
 };
 
@@ -63,7 +64,7 @@ export function playBetSound(): void {
 }
 
 export function playCheckSound(): void {
-  playSfx('reveal');
+  playSfx('tap');
 }
 
 export function playWinnerSound(): void {

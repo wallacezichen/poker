@@ -53,6 +53,13 @@ export interface GameState {
     interval: number;
     handsUntilNext: number;
   };
+  twoSevenBonus?: {
+    winnerId: string;
+    winnerName: string;
+    amountPerPlayer: number;
+    total: number;
+    collectedFrom: Array<{ playerId: string; playerName: string; amount: number }>;
+  };
   handNumber: number;
   stage: GameStage;
   communityCards: Card[];
@@ -109,6 +116,8 @@ export interface RoomSettings {
   bombPotEnabled: boolean;
   bombPotAmount: number;
   bombPotInterval: number;
+  twoSevenEnabled: boolean;
+  twoSevenAmount: number;
 }
 
 export interface Room {
@@ -152,7 +161,7 @@ export interface ClientToServerEvents {
     cb: (res: { success: boolean; error?: string }) => void
   ) => void;
   'room:update_settings': (
-    payload: { settings: Partial<Pick<RoomSettings, 'bombPotEnabled' | 'bombPotAmount' | 'bombPotInterval'>> },
+    payload: { settings: Partial<Pick<RoomSettings, 'smallBlind' | 'bigBlind' | 'bombPotEnabled' | 'bombPotAmount' | 'bombPotInterval' | 'twoSevenEnabled' | 'twoSevenAmount'>> },
     cb: (res: { success: boolean; error?: string }) => void
   ) => void;
   'player:away': (payload: { away: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;

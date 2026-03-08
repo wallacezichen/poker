@@ -26,6 +26,7 @@ export function useSocket() {
   } = useGameStore();
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streetRevealDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevStateRef = useRef<GameState | null>(null);
   const lastWinnerSoundKeyRef = useRef<string | null>(null);
 
@@ -60,7 +61,7 @@ export function useSocket() {
       useGameStore.getState().reset();
     });
 
-    s.on('game:state', (state) => {
+    const applyIncomingState = (state: GameState) => {
       const prev = prevStateRef.current;
       const myId = useGameStore.getState().myPlayerId;
       const prevMe = prev?.players.find((p) => p.id === myId);
@@ -109,6 +110,29 @@ export function useSocket() {
       // Timer UI is intentionally disabled for now.
       stopTimer();
       useGameStore.getState().setTimerSeconds(0);
+    };
+
+    s.on('game:state', (state) => {
+      const prev = prevStateRef.current;
+      const isStreetReveal =
+        !!prev &&
+        prev.stage !== state.stage &&
+        (state.stage === 'flop' || state.stage === 'turn' || state.stage === 'river');
+
+      if (isStreetReveal) {
+        if (streetRevealDelayRef.current) clearTimeout(streetRevealDelayRef.current);
+        streetRevealDelayRef.current = setTimeout(() => {
+          applyIncomingState(state);
+          streetRevealDelayRef.current = null;
+        }, 1500);
+        return;
+      }
+
+      if (streetRevealDelayRef.current) {
+        clearTimeout(streetRevealDelayRef.current);
+        streetRevealDelayRef.current = null;
+      }
+      applyIncomingState(state);
     });
 
     s.on('game:hand_result', (result) => {
@@ -171,6 +195,10 @@ export function useSocket() {
       s.off('player:disconnected');
       s.off('player:connected');
       stopTimer();
+      if (streetRevealDelayRef.current) {
+        clearTimeout(streetRevealDelayRef.current);
+        streetRevealDelayRef.current = null;
+      }
       prevStateRef.current = null;
       lastWinnerSoundKeyRef.current = null;
     };
@@ -285,6 +313,12 @@ export function useSocket() {
     });
   }
 
+  function updateRoomSettings(settings: Partial<Pick<RoomSettings, 'smallBlind' | 'bigBlind' | 'bombPotEnabled' | 'bombPotAmount' | 'bombPotInterval' | 'twoSevenEnabled' | 'twoSevenAmount'>>) {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      getSocket().emit('room:update_settings', { settings }, (res) => resolve(res));
+    });
+  }
+
   function setPause(paused: boolean) {
     return new Promise<{ success: boolean; error?: string }>((resolve) => {
       getSocket().emit('game:pause', { paused }, (res) => resolve(res));
@@ -356,6 +390,7 @@ export function useSocket() {
     setAway,
     decideJoinRequest,
     hostManagePlayer,
+    updateRoomSettings,
     setPause,
     startGame,
     performAction,

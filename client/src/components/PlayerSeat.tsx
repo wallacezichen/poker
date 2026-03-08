@@ -19,6 +19,8 @@ interface PlayerSeatProps {
   winsCount?: number;
   statusText?: string;
   showCheckBubble?: boolean;
+  autoPostAmount?: number;
+  autoPostActive?: boolean;
   gameType?: GameType;
 }
 
@@ -33,7 +35,7 @@ function cardKey(card?: CardType): string {
 
 export default function PlayerSeat({
   player, isDealer, isSmallBlind, isBigBlind,
-  isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false, gameType = 'short_deck',
+  isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false, autoPostAmount, autoPostActive = false, gameType = 'short_deck',
 }: PlayerSeatProps) {
   const expectedHoleCount = gameType === 'omaha' ? 4 : 2;
   const showCards = isMe || (player.holeCards?.length ?? 0) > 0;
@@ -145,9 +147,9 @@ export default function PlayerSeat({
             </div>
           )}
 
-          {player.bet > 0 && (
+          {(autoPostActive || player.bet > 0) && (
             <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-lime-300 text-black rounded-full w-12 h-12 text-xl font-bold flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.35)]">
-              {formatChips(player.bet)}
+              {formatChips(autoPostActive ? (autoPostAmount ?? 0) : player.bet)}
             </div>
           )}
           {player.bet === 0 && showCheckBubble && (

@@ -1,11 +1,11 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { GameState, Room, JoinRequest } from '../types/poker';
 import Card from './Card';
 import PlayerSeat from './PlayerSeat';
 import { useGameStore } from '../store/gameStore';
 import clsx from 'clsx';
-import { getSoundSettings, setSoundSettings } from '../lib/soundEffects';
+import { getSoundSettings, playBetSound, setSoundSettings } from '../lib/soundEffects';
 
 // Seat positions as percentage [top, left] on the oval table
 // Position 0 = bottom center (always my seat), others go clockwise
@@ -92,6 +92,7 @@ interface GameTableProps {
   onSetAway: (away: boolean) => void;
   onJoinRequestDecision: (requestId: string, approve: boolean, buyIn?: number) => void;
   onHostManagePlayer: (targetPlayerId: string, action: 'set_chips' | 'kick', chips?: number) => Promise<{ success: boolean; error?: string }>;
+  onUpdateRoomSettings: (settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number }>) => Promise<{ success: boolean; error?: string }>;
   onSetPause: (paused: boolean) => void;
   onNextHand: () => void;
   onRevealCards: (count: 1 | 2) => void;
@@ -102,7 +103,7 @@ interface GameTableProps {
 
 export default function GameTable({
   gameState, room, myPlayerId,
-  onAction, onSendChat, onSetAway, onJoinRequestDecision, onHostManagePlayer, onSetPause, onNextHand, onRevealCards, onRunItTwiceVote, onEndSession, onLeave
+  onAction, onSendChat, onSetAway, onJoinRequestDecision, onHostManagePlayer, onUpdateRoomSettings, onSetPause, onNextHand, onRevealCards, onRunItTwiceVote, onEndSession, onLeave
 }: GameTableProps) {
   const {
     chatMessages, joinRequests,
@@ -123,15 +124,48 @@ export default function GameTable({
   const [managing, setManaging] = useState(false);
   const [checkBubblePlayers, setCheckBubblePlayers] = useState<Set<string>>(new Set());
   const [showSessionLedger, setShowSessionLedger] = useState(false);
+  const [showOptionsModal, setShowOptionsModal] = useState(false);
+  const [smallBlindDraft, setSmallBlindDraft] = useState('50');
+  const [bigBlindDraft, setBigBlindDraft] = useState('100');
+  const [bombPotEnabledDraft, setBombPotEnabledDraft] = useState(false);
+  const [bombPotAmountDraft, setBombPotAmountDraft] = useState('100');
+  const [bombPotIntervalDraft, setBombPotIntervalDraft] = useState('5');
+  const [twoSevenEnabledDraft, setTwoSevenEnabledDraft] = useState(false);
+  const [twoSevenAmountDraft, setTwoSevenAmountDraft] = useState('100');
+  const [savingOptions, setSavingOptions] = useState(false);
+  const [optionsToast, setOptionsToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [bombIntroRunning, setBombIntroRunning] = useState(false);
+  const [bombIntroStep, setBombIntroStep] = useState(0);
   const prevStageRef = useRef(gameState.stage);
   const prevHandRef = useRef(gameState.handNumber);
   const prevActionLenRef = useRef(gameState.actionLog.length);
+  const optionsToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bombIntroTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const bombIntroHandRef = useRef<number>(0);
+  const [twoSevenAnimRunning, setTwoSevenAnimRunning] = useState(false);
+  const [twoSevenAnimStep, setTwoSevenAnimStep] = useState(0);
+  const [twoSevenAnimPhase, setTwoSevenAnimPhase] = useState<'collect' | 'award' | null>(null);
+  const twoSevenAnimTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const twoSevenAnimHandRef = useRef<number>(0);
 
   // Find my player
   const myPlayer = gameState.players.find(p => p.id === myPlayerId);
+  const bombAnteEntries = gameState.actionLog.filter((e) => e.action === 'bomb_ante');
+  const bombIntroOrderIds = useMemo(() => {
+    if (!gameState.bombPot?.active || gameState.players.length === 0) return [] as string[];
+    const n = gameState.players.length;
+    const start = (gameState.bigBlindIndex + 1 + n) % n; // UTG
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) {
+      const idx = (start + i) % n;
+      const p = gameState.players[idx];
+      if (p && !p.folded) ids.push(p.id);
+    }
+    return ids;
+  }, [gameState.bombPot?.active, gameState.players, gameState.bigBlindIndex]);
   const isDiscardStage = gameState.stage === 'flop_discard' && (room.settings.gameType ?? 'short_deck') === 'crazy_pineapple';
   const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === myPlayerId;
-  const canAct = isMyTurn && !myPlayer?.folded && !myPlayer?.allIn && gameState.stage !== 'showdown' && !isGamePaused;
+  const canAct = isMyTurn && !bombIntroRunning && !myPlayer?.folded && !myPlayer?.allIn && gameState.stage !== 'showdown' && !isGamePaused;
 
   // Reorder players so my seat is at position 0
   const inHandById = new Map(gameState.players.map((p, idx) => [p.id, { player: p, idx }]));
@@ -202,6 +236,92 @@ export default function GameTable({
       const net = buyOut - buyIn;
       return { id: p.id, name: p.name, buyIn, buyOut, net };
     });
+  const twoSevenBonus = gameState.twoSevenBonus;
+  const twoSevenCollected = twoSevenBonus?.collectedFrom || [];
+  const twoSevenCurrentCollectEntry =
+    twoSevenAnimRunning && twoSevenAnimPhase === 'collect'
+      ? twoSevenCollected[Math.min(twoSevenAnimStep, Math.max(0, twoSevenCollected.length - 1))]
+      : undefined;
+
+  useEffect(() => {
+    setSmallBlindDraft(String(Math.max(1, Math.floor(room.settings.smallBlind ?? 50))));
+    setBigBlindDraft(String(Math.max(1, Math.floor(room.settings.bigBlind ?? 100))));
+    setBombPotEnabledDraft(!!room.settings.bombPotEnabled);
+    setBombPotAmountDraft(String(Math.max(1, Math.floor(room.settings.bombPotAmount ?? 100))));
+    setBombPotIntervalDraft(String(Math.max(1, Math.floor(room.settings.bombPotInterval ?? 5))));
+    setTwoSevenEnabledDraft(!!room.settings.twoSevenEnabled);
+    setTwoSevenAmountDraft(String(Math.max(1, Math.floor(room.settings.twoSevenAmount ?? 100))));
+  }, [room.settings.smallBlind, room.settings.bigBlind, room.settings.bombPotEnabled, room.settings.bombPotAmount, room.settings.bombPotInterval, room.settings.twoSevenEnabled, room.settings.twoSevenAmount]);
+  useEffect(() => {
+    const isBombHand = !!gameState.bombPot?.active;
+    if (!isBombHand || gameState.handNumber === bombIntroHandRef.current) return;
+    bombIntroHandRef.current = gameState.handNumber;
+
+    for (const t of bombIntroTimersRef.current) clearTimeout(t);
+    bombIntroTimersRef.current = [];
+
+    if (bombIntroOrderIds.length === 0) return;
+
+    setBombIntroRunning(true);
+    setBombIntroStep(0);
+
+    bombIntroOrderIds.forEach((_, idx) => {
+      const t = setTimeout(() => {
+        setBombIntroStep(idx);
+        playBetSound();
+      }, idx * 3000);
+      bombIntroTimersRef.current.push(t);
+    });
+    const finishTimer = setTimeout(() => {
+      setBombIntroRunning(false);
+      bombIntroTimersRef.current = [];
+    }, bombIntroOrderIds.length * 3000 + 300);
+    bombIntroTimersRef.current.push(finishTimer);
+
+    return () => {
+      for (const t of bombIntroTimersRef.current) clearTimeout(t);
+      bombIntroTimersRef.current = [];
+    };
+  }, [gameState.handNumber, gameState.bombPot?.active, bombIntroOrderIds.length]);
+  useEffect(() => {
+    if (gameState.stage !== 'showdown' || !twoSevenBonus) return;
+    if (twoSevenAnimHandRef.current === gameState.handNumber) return;
+    twoSevenAnimHandRef.current = gameState.handNumber;
+
+    for (const t of twoSevenAnimTimersRef.current) clearTimeout(t);
+    twoSevenAnimTimersRef.current = [];
+
+    setTwoSevenAnimRunning(true);
+    setTwoSevenAnimPhase('collect');
+    setTwoSevenAnimStep(0);
+
+    twoSevenCollected.forEach((_, idx) => {
+      const t = setTimeout(() => {
+        setTwoSevenAnimStep(idx);
+        playBetSound();
+      }, idx * 1000);
+      twoSevenAnimTimersRef.current.push(t);
+    });
+
+    const awardStart = twoSevenCollected.length * 1000 + 300;
+    const awardTimer = setTimeout(() => {
+      setTwoSevenAnimPhase('award');
+      playBetSound();
+    }, awardStart);
+    twoSevenAnimTimersRef.current.push(awardTimer);
+
+    const finishTimer = setTimeout(() => {
+      setTwoSevenAnimRunning(false);
+      setTwoSevenAnimPhase(null);
+      twoSevenAnimTimersRef.current = [];
+    }, awardStart + 1200);
+    twoSevenAnimTimersRef.current.push(finishTimer);
+
+    return () => {
+      for (const t of twoSevenAnimTimersRef.current) clearTimeout(t);
+      twoSevenAnimTimersRef.current = [];
+    };
+  }, [gameState.handNumber, gameState.stage, twoSevenBonus, twoSevenCollected.length]);
   const manageTarget = manageTargetId ? room.players.find((p) => p.id === manageTargetId) : undefined;
   const myRevealMask = myPlayer?.revealedMask ?? 0;
   const myRunItTwiceVote = runItTwice?.votes?.[myPlayerId] ?? null;
@@ -251,6 +371,21 @@ export default function GameTable({
     }
     return 'ring-2 ring-yellow-300/80 shadow-[0_0_14px_rgba(250,204,21,0.55)]';
   };
+
+  function showOptionsToast(type: 'success' | 'error', text: string) {
+    if (optionsToastTimerRef.current) clearTimeout(optionsToastTimerRef.current);
+    setOptionsToast({ type, text });
+    optionsToastTimerRef.current = setTimeout(() => {
+      setOptionsToast(null);
+      optionsToastTimerRef.current = null;
+    }, 2000);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (optionsToastTimerRef.current) clearTimeout(optionsToastTimerRef.current);
+    };
+  }, []);
 
   const triggerPrimaryAction = () => {
     if (!canAct) return;
@@ -308,6 +443,7 @@ export default function GameTable({
       }
 
       if (showHandResult || gameState.stage === 'showdown') return;
+      if (bombIntroRunning) return;
       if (isDiscardStage) return;
 
       if (k === 'escape' && showRaisePanel) {
@@ -351,6 +487,7 @@ export default function GameTable({
     gameState.currentBet,
     gameState.bigBlind,
     gameState.stage,
+    bombIntroRunning,
     isDiscardStage,
     showHandResult,
     showPrimaryAction,
@@ -479,6 +616,18 @@ export default function GameTable({
       style={{ background: 'radial-gradient(circle at 50% 10%, #2b2f3a 0%, #1a1d26 45%, #12141b 100%)' }}
     >
       <div className="relative h-full overflow-hidden">
+        {optionsToast && (
+          <div
+            className={clsx(
+              'absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[80] rounded-lg px-4 py-2 text-sm font-semibold shadow-[0_10px_26px_rgba(0,0,0,0.4)] border',
+              optionsToast.type === 'success'
+                ? 'bg-emerald-900/80 border-emerald-300/40 text-emerald-100'
+                : 'bg-rose-900/80 border-rose-300/40 text-rose-100'
+            )}
+          >
+            {optionsToast.text}
+          </div>
+        )}
         <div
           className="absolute top-0 left-0 origin-top-left"
           style={{
@@ -503,7 +652,12 @@ export default function GameTable({
         </button>
 
         <aside className="hidden md:flex absolute left-3 top-24 z-20 flex-col gap-2">
-          <SquareTool icon="☰" label="OPTIONS" />
+          <SquareTool
+            icon="☰"
+            label="OPTIONS"
+            active={showOptionsModal}
+            onClick={() => setShowOptionsModal(v => !v)}
+          />
           <SquareTool
             icon="📘"
             label="比大小"
@@ -570,6 +724,223 @@ export default function GameTable({
                 onChange={(e) => persistSoundSettings(soundMuted, Number(e.target.value))}
                 className="w-full accent-yellow-400"
               />
+            </div>
+          </div>
+        )}
+        {showOptionsModal && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
+            <div className="w-[560px] max-w-[96vw] rounded-xl border border-white/20 bg-[#141821] p-4 shadow-[0_20px_45px_rgba(0,0,0,0.5)]">
+              <div className="flex items-center justify-between">
+                <div className="text-lg font-bold">Options</div>
+                <button
+                  onClick={() => setShowOptionsModal(false)}
+                  className="px-2.5 py-1 rounded bg-white/15 hover:bg-white/25 text-sm"
+                >
+                  关闭
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-lg border border-white/15 bg-white/5 p-3">
+                <div className="text-sm font-semibold text-white/90 mb-2">1. 修改大小盲</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-white/65 mb-1">Small Blind</div>
+                    <input
+                      type="number"
+                      min={1}
+                      disabled={!isHost}
+                      value={smallBlindDraft}
+                      onChange={(e) => setSmallBlindDraft(e.target.value)}
+                      className="w-full rounded border border-white/25 bg-black/35 px-3 py-2 text-white outline-none focus:border-emerald-400 disabled:opacity-60"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs text-white/65 mb-1">Big Blind</div>
+                    <input
+                      type="number"
+                      min={1}
+                      disabled={!isHost}
+                      value={bigBlindDraft}
+                      onChange={(e) => setBigBlindDraft(e.target.value)}
+                      className="w-full rounded border border-white/25 bg-black/35 px-3 py-2 text-white outline-none focus:border-emerald-400 disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-white/55">Current: {room.settings.smallBlind}/{room.settings.bigBlind}</div>
+              </div>
+
+              <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3">
+                <div className="text-sm font-semibold text-white/90 mb-2">2. 炸弹底池</div>
+                <div className="flex items-center justify-start gap-5">
+                  <span className="text-sm text-white/90">Enable Bomb Pot</span>
+                  <button
+                    disabled={!isHost}
+                    onClick={() => isHost && setBombPotEnabledDraft(v => !v)}
+                    className={clsx(
+                      'relative inline-flex h-7 w-14 items-center rounded-full transition-colors',
+                      !isHost && 'opacity-50 cursor-not-allowed',
+                      bombPotEnabledDraft ? 'bg-emerald-500' : 'bg-slate-500'
+                    )}
+                    aria-pressed={bombPotEnabledDraft}
+                  >
+                    <span
+                      className={clsx(
+                        'inline-block h-5 w-5 transform rounded-full bg-white transition-transform',
+                        bombPotEnabledDraft ? 'translate-x-8' : 'translate-x-1'
+                      )}
+                    />
+                  </button>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="text-xs text-white/65 mb-1">Bomb Amount</div>
+                    <input
+                      type="number"
+                      min={1}
+                      disabled={!isHost}
+                      value={bombPotAmountDraft}
+                      onChange={(e) => setBombPotAmountDraft(e.target.value)}
+                      className="w-full rounded border border-white/25 bg-black/35 px-3 py-2 text-white outline-none focus:border-emerald-400 disabled:opacity-60"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-xs text-white/65 mb-1">Every N Hands</div>
+                    <input
+                      type="number"
+                      min={1}
+                      disabled={!isHost}
+                      value={bombPotIntervalDraft}
+                      onChange={(e) => setBombPotIntervalDraft(e.target.value)}
+                      className="w-full rounded border border-white/25 bg-black/35 px-3 py-2 text-white outline-none focus:border-emerald-400 disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-white/55">
+                  {room.settings.bombPotEnabled
+                    ? `Current: ON · ${room.settings.bombPotAmount} chips · every ${room.settings.bombPotInterval} hands`
+                    : 'Current: OFF'}
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3">
+                <div className="text-sm font-semibold text-white/90 mb-2">3. 27 Game</div>
+                <div className="flex items-center justify-start gap-5">
+                  <span className="text-sm text-white/90">Enable 27 Game</span>
+                  <button
+                    disabled={!isHost}
+                    onClick={() => isHost && setTwoSevenEnabledDraft(v => !v)}
+                    className={clsx(
+                      'relative inline-flex h-7 w-14 items-center rounded-full transition-colors',
+                      !isHost && 'opacity-50 cursor-not-allowed',
+                      twoSevenEnabledDraft ? 'bg-emerald-500' : 'bg-slate-500'
+                    )}
+                    aria-pressed={twoSevenEnabledDraft}
+                  >
+                    <span
+                      className={clsx(
+                        'inline-block h-5 w-5 transform rounded-full bg-white transition-transform',
+                        twoSevenEnabledDraft ? 'translate-x-8' : 'translate-x-1'
+                      )}
+                    />
+                  </button>
+                </div>
+                <div className="mt-3">
+                  <div className="text-xs text-white/65 mb-1">Amount Per Other Player</div>
+                  <input
+                    type="number"
+                    min={1}
+                    disabled={!isHost}
+                    value={twoSevenAmountDraft}
+                    onChange={(e) => setTwoSevenAmountDraft(e.target.value)}
+                    className="w-full rounded border border-white/25 bg-black/35 px-3 py-2 text-white outline-none focus:border-emerald-400 disabled:opacity-60"
+                  />
+                </div>
+                <div className="mt-2 text-xs text-white/55">
+                  {room.settings.twoSevenEnabled
+                    ? `Current: ON · ${room.settings.twoSevenAmount} per other player`
+                    : 'Current: OFF'}
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  disabled={!isHost || savingOptions}
+                  onClick={async () => {
+                    if (!isHost) return;
+                    const sbRaw = smallBlindDraft.trim();
+                    const bbRaw = bigBlindDraft.trim();
+                    if (!sbRaw || !bbRaw) {
+                      alert('小盲和大盲不能为空，请重新输入');
+                      return;
+                    }
+                    const sb = Number(sbRaw);
+                    const bb = Number(bbRaw);
+                    if (!Number.isInteger(sb) || !Number.isInteger(bb)) {
+                      alert('小盲和大盲必须是整数');
+                      return;
+                    }
+                    if (sb <= 0 || bb <= 0) {
+                      alert('小盲和大盲必须大于 0');
+                      return;
+                    }
+                    if (bb <= sb) {
+                      alert('大盲必须大于小盲');
+                      return;
+                    }
+                    const bombAmtRaw = bombPotAmountDraft.trim();
+                    const bombIntRaw = bombPotIntervalDraft.trim();
+                    if (!bombAmtRaw || !bombIntRaw) {
+                      alert('Bomb Pot 金额和轮数不能为空，请重新输入');
+                      return;
+                    }
+                    const bombAmount = Number(bombAmtRaw);
+                    const bombInterval = Number(bombIntRaw);
+                    if (!Number.isInteger(bombAmount) || !Number.isInteger(bombInterval)) {
+                      alert('Bomb Pot 金额和轮数必须是整数');
+                      return;
+                    }
+                    if (bombAmount <= 0 || bombInterval <= 0) {
+                      alert('Bomb Pot 金额和轮数必须大于 0');
+                      return;
+                    }
+                    const twoSevenRaw = twoSevenAmountDraft.trim();
+                    if (!twoSevenRaw) {
+                      alert('27 Game 金额不能为空，请重新输入');
+                      return;
+                    }
+                    const twoSevenAmount = Number(twoSevenRaw);
+                    if (!Number.isInteger(twoSevenAmount) || twoSevenAmount <= 0) {
+                      alert('27 Game 金额必须是大于 0 的整数');
+                      return;
+                    }
+                    setSavingOptions(true);
+                    const res = await onUpdateRoomSettings({
+                      smallBlind: sb,
+                      bigBlind: bb,
+                      bombPotEnabled: bombPotEnabledDraft,
+                      bombPotAmount: bombAmount,
+                      bombPotInterval: bombInterval,
+                      twoSevenEnabled: twoSevenEnabledDraft,
+                      twoSevenAmount,
+                    });
+                    setSavingOptions(false);
+                    if (!res.success) {
+                      showOptionsToast('error', res.error || '保存失败');
+                      return;
+                    }
+                    showOptionsToast('success', '保存设置成功');
+                    setShowOptionsModal(false);
+                  }}
+                  className={clsx(
+                    'px-4 py-2 rounded-lg border text-sm font-semibold',
+                    !isHost || savingOptions
+                      ? 'border-white/20 bg-white/10 text-white/40 cursor-not-allowed'
+                      : 'border-emerald-300/40 bg-emerald-900/35 hover:bg-emerald-800/45 text-emerald-100'
+                  )}
+                >
+                  {savingOptions ? 'Saving...' : '保存'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -738,11 +1109,34 @@ export default function GameTable({
 
             {/* Community cards + pot */}
             <div className="absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
-              <div className="px-14 py-1 rounded-full bg-black/18 border border-black/15 font-semibold text-4xl">
-                {formatChips(gameState.pot)}
+              <div className="flex items-center gap-2">
+                <div className="px-14 py-1 rounded-full bg-black/18 border border-black/15 font-semibold text-4xl">
+                  {formatChips(gameState.pot)}
+                </div>
+                {gameState.bombPot?.active && (
+                  <div className="flex items-center gap-1 rounded-full bg-rose-900/70 border border-rose-200/40 px-3 py-1">
+                    <span className="text-sm font-extrabold tracking-wide text-rose-100">💣 BOMB POT</span>
+                  </div>
+                )}
+                {twoSevenBonus && (
+                  <div className="flex items-center gap-1 rounded-full bg-emerald-900/70 border border-emerald-200/40 px-3 py-1">
+                    <span className="text-sm font-extrabold tracking-wide text-emerald-100">27 GAME WINNER</span>
+                  </div>
+                )}
               </div>
-
-              {showBothRunBoards && showPreflopRunGrid ? (
+              {bombIntroRunning && gameState.bombPot?.active ? (
+                <div className="mt-1 flex gap-2.5">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <Card
+                      key={`bomb-intro-${i}`}
+                      card={undefined}
+                      faceDown
+                      size="xl"
+                      index={i}
+                    />
+                  ))}
+                </div>
+              ) : showBothRunBoards && showPreflopRunGrid ? (
                 <div className="mt-1 flex flex-col items-center gap-2">
                   <div className="flex gap-2.5">
                     {Array.from({ length: 5 }).map((_, i) => (
@@ -971,6 +1365,34 @@ export default function GameTable({
                   winsCount={winsByPlayer[roomPlayer.id] || 0}
                   statusText={!inHand ? (roomPlayer.isAway ? 'AWAY' : 'WAIT NEXT HAND') : undefined}
                   showCheckBubble={inHand?.player.bet === 0 && checkBubblePlayers.has(roomPlayer.id)}
+                  autoPostActive={
+                    (bombIntroRunning &&
+                      gameState.bombPot?.active &&
+                      roomPlayer.id === bombIntroOrderIds[Math.min(bombIntroStep, Math.max(0, bombIntroOrderIds.length - 1))]) ||
+                    (twoSevenAnimRunning &&
+                      twoSevenAnimPhase === 'collect' &&
+                      roomPlayer.id === twoSevenCurrentCollectEntry?.playerId) ||
+                    (twoSevenAnimRunning &&
+                      twoSevenAnimPhase === 'award' &&
+                      !!twoSevenBonus &&
+                      roomPlayer.id === twoSevenBonus.winnerId)
+                  }
+                  autoPostAmount={
+                    bombIntroRunning &&
+                    gameState.bombPot?.active &&
+                    roomPlayer.id === bombIntroOrderIds[Math.min(bombIntroStep, Math.max(0, bombIntroOrderIds.length - 1))]
+                      ? Number(gameState.bombPot?.amount || 0)
+                        : twoSevenAnimRunning &&
+                          twoSevenAnimPhase === 'collect' &&
+                          roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
+                        ? Number(twoSevenCurrentCollectEntry?.amount || 0)
+                        : twoSevenAnimRunning &&
+                            twoSevenAnimPhase === 'award' &&
+                            !!twoSevenBonus &&
+                            roomPlayer.id === twoSevenBonus.winnerId
+                          ? Number(twoSevenBonus.total || 0)
+                          : undefined
+                  }
                   gameType={room.settings.gameType ?? 'short_deck'}
                 />
               </div>
@@ -1107,13 +1529,13 @@ export default function GameTable({
               </div>
             </div>
           )}
-          {!showHandResult && gameState.stage !== 'showdown' && isMyTurn && (
+          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && isMyTurn && (
             <>
               <div className="text-yellow-300 font-semibold text-3xl tracking-wide">YOUR TURN</div>
               <div className="bg-white/92 text-black text-4 font-semibold px-6 py-2 rounded-lg">EXTRA TIME ACTIVATED</div>
             </>
           )}
-          {!showHandResult && gameState.stage !== 'showdown' && isDiscardStage && (
+          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && isDiscardStage && (
             <div className="w-full rounded-xl border border-rose-300/30 bg-rose-950/35 p-3">
               <div className="text-rose-200 font-semibold mb-2 text-sm">Crazy Pineapple: 请选择弃掉一张手牌</div>
               <div className="grid grid-cols-3 gap-2">
@@ -1133,7 +1555,7 @@ export default function GameTable({
               </div>
             </div>
           )}
-          {!showHandResult && gameState.stage !== 'showdown' && !showRaisePanel && !isDiscardStage && (
+          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && !showRaisePanel && !isDiscardStage && (
             <div className={clsx('grid gap-2 w-full', showPrimaryAction ? 'grid-cols-4' : 'grid-cols-3')}>
             {showPrimaryAction && (
               <ActionBox
@@ -1164,7 +1586,7 @@ export default function GameTable({
             />
             </div>
           )}
-          {!showHandResult && gameState.stage !== 'showdown' && canAct && myPlayer && canRaise && showRaisePanel && !isDiscardStage && (
+          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && canAct && myPlayer && canRaise && showRaisePanel && !isDiscardStage && (
             <div className="w-full rounded-xl border border-white/15 bg-black/45 p-2 space-y-2">
               <div className="flex items-stretch gap-2">
                 <div className="w-[180px] rounded-lg border border-white/15 bg-white/5 p-2 text-center">

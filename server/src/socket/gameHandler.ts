@@ -6,6 +6,7 @@ import { decideBotAction, getBotThinkTime } from '../game/botAI';
 import {
   createRoom, getRoom, updateRoomStatus, upsertPlayer,
   updatePlayerChips, updatePlayerConnection, getPlayers, removePlayer,
+  updateRoomSettings,
   saveGameState, loadGameState, saveHandHistory,
   saveChat, getChatHistory,
 } from '../db/supabase';
@@ -43,6 +44,25 @@ function normalizeGameType(raw: unknown): RoomSettings['gameType'] {
   if (v === 'omaha') return 'omaha';
   if (v === 'crazy_pineapple' || v === 'crazy pineapple' || v === 'pineapple') return 'crazy_pineapple';
   return 'short_deck';
+}
+
+function normalizeRoomSettings(raw: any): RoomSettings {
+  const smallBlind = Math.max(1, Math.floor(raw?.smallBlind ?? 50));
+  const bigBlindRaw = Math.max(1, Math.floor(raw?.bigBlind ?? 100));
+  const bigBlind = Math.max(smallBlind, bigBlindRaw);
+  return {
+    gameType: normalizeGameType(raw?.gameType),
+    startingChips: raw?.startingChips ?? 5000,
+    smallBlind,
+    bigBlind,
+    maxPlayers: raw?.maxPlayers ?? 9,
+    actionTimeout: raw?.actionTimeout ?? 30,
+    bombPotEnabled: !!raw?.bombPotEnabled,
+    bombPotAmount: Math.max(1, Math.floor(raw?.bombPotAmount ?? 100)),
+    bombPotInterval: Math.max(1, Math.floor(raw?.bombPotInterval ?? 5)),
+    twoSevenEnabled: !!raw?.twoSevenEnabled,
+    twoSevenAmount: Math.max(1, Math.floor(raw?.twoSevenAmount ?? 100)),
+  };
 }
 
 function randomId(len = 8) {
@@ -114,12 +134,7 @@ export function registerGameHandlers(
       const roomId = roomCode();
       const playerId = randomId();
       const roomSettings: RoomSettings = {
-        gameType: normalizeGameType((settings as any)?.gameType),
-        startingChips: settings.startingChips ?? 5000,
-        smallBlind: settings.smallBlind ?? 50,
-        bigBlind: settings.bigBlind ?? 100,
-        maxPlayers: settings.maxPlayers ?? 9,
-        actionTimeout: settings.actionTimeout ?? 30,
+        ...normalizeRoomSettings(settings),
       };
 
       await createRoom(roomId, playerId, roomSettings);
@@ -429,6 +444,28 @@ export function registerGameHandlers(
   });
 
   // ============================================================
+  // HOST UPDATE ROOM SETTINGS (bomb pot controls)
+  // ============================================================
+  socket.on('room:update_settings', async ({ settings }, cb) => {
+    const session = socketToPlayer.get(socket.id);
+    if (!session) return cb({ success: false, error: 'Not in a room' });
+    const { roomId, playerId } = session;
+
+    const roomData = await getRoom(roomId);
+    if (!roomData) return cb({ success: false, error: 'Room not found' });
+    if (roomData.host_id !== playerId) return cb({ success: false, error: 'Only host can update settings' });
+
+    const merged = normalizeRoomSettings({
+      ...roomData.settings,
+      ...settings,
+    });
+    await updateRoomSettings(roomId, merged);
+    const room = await getFullRoom(roomId);
+    if (room) io.to(roomId).emit('room:updated', room);
+    cb({ success: true });
+  });
+
+  // ============================================================
   // JOIN REQUEST DECISION (host only)
   // ============================================================
   socket.on('room:join_request_decision', async ({ requestId, approve, buyIn }, cb) => {
@@ -588,8 +625,7 @@ export function registerGameHandlers(
         chips: p.chips, isBot: p.isBot, isConnected: p.isConnected,
       })),
       {
-        ...roomData.settings,
-        gameType: normalizeGameType((roomData.settings as any)?.gameType),
+        ...normalizeRoomSettings(roomData.settings),
       },
       0, // dealerIndex
       1, // handNumber
@@ -615,8 +651,9 @@ export function registerGameHandlers(
     cb({ success: true });
     console.log(`[Socket][game:start] ack_sent room=${roomId} totalElapsedMs=${Date.now() - startedAt}`);
 
-    // Schedule bots if needed
-    scheduleCurrentPlayerAction(io, roomId, state);
+    // Schedule next flow
+    if (shouldAutoRunout(state)) startDelayedRunout(io, roomId);
+    else scheduleCurrentPlayerAction(io, roomId, state);
     console.log(`[Socket][game:start] next_action_scheduled room=${roomId} totalElapsedMs=${Date.now() - startedAt}`);
   });
 
@@ -846,10 +883,7 @@ async function getFullRoom(roomId: string) {
     id: roomData.id,
     hostId: roomData.host_id,
     status: roomData.status,
-    settings: {
-      ...roomData.settings,
-      gameType: normalizeGameType((roomData.settings as any)?.gameType),
-    },
+    settings: normalizeRoomSettings(roomData.settings),
     players: enrichedPlayers,
     createdAt: roomData.created_at,
   };
@@ -926,16 +960,55 @@ function maybeStartRunItTwiceOffer(io: Server, roomId: string, state: FullGameSt
 }
 
 function finishShowdown(io: Server, roomId: string, state: FullGameState): void {
-  saveHandHistory(state).catch(console.error);
-  for (const p of state.players) {
-    if (!p.isBot) updatePlayerChips(roomId, p.id, p.chips).catch(console.error);
-  }
-  io.to(roomId).emit('game:hand_result', {
-    winners: state.winners ?? [],
-    players: publicPlayersForShowdown(state),
-    pot: state.pot,
-    handNumber: state.handNumber,
-  });
+  (async () => {
+    const roomData = await getRoom(roomId);
+    const twoSevenEnabled = !!roomData?.settings?.twoSevenEnabled;
+    const twoSevenAmount = Math.max(1, Math.floor(roomData?.settings?.twoSevenAmount ?? 100));
+    state.twoSevenBonus = undefined;
+
+    const singleWinner = (state.winners ?? []).length === 1 ? state.winners![0] : null;
+    if (twoSevenEnabled && singleWinner && singleWinner.handName !== 'Others Folded') {
+      const winner = state.players.find((p) => p.id === singleWinner.playerId);
+      const has2 = !!winner?.holeCards?.some((c) => c.rank === '2');
+      const has7 = !!winner?.holeCards?.some((c) => c.rank === '7');
+      if (winner && has2 && has7) {
+        const collectedFrom: Array<{ playerId: string; playerName: string; amount: number }> = [];
+        let total = 0;
+        for (const p of state.players) {
+          if (p.id === winner.id) continue;
+          const pay = Math.min(twoSevenAmount, p.chips);
+          if (pay <= 0) continue;
+          p.chips -= pay;
+          total += pay;
+          collectedFrom.push({ playerId: p.id, playerName: p.name, amount: pay });
+        }
+        if (total > 0) {
+          winner.chips += total;
+          singleWinner.chipsWon += total;
+          state.twoSevenBonus = {
+            winnerId: winner.id,
+            winnerName: winner.name,
+            amountPerPlayer: twoSevenAmount,
+            total,
+            collectedFrom,
+          };
+        }
+      }
+    }
+
+    await saveGameState(state);
+    saveHandHistory(state).catch(console.error);
+    for (const p of state.players) {
+      if (!p.isBot) updatePlayerChips(roomId, p.id, p.chips).catch(console.error);
+    }
+    broadcastGameState(io, roomId, state);
+    io.to(roomId).emit('game:hand_result', {
+      winners: state.winners ?? [],
+      players: publicPlayersForShowdown(state),
+      pot: state.pot,
+      handNumber: state.handNumber,
+    });
+  })().catch(console.error);
 }
 
 function startDelayedRunout(
@@ -1077,8 +1150,7 @@ async function startNextHand(io: Server, roomId: string) {
       chips: p.chips, isBot: p.isBot, isConnected: p.isConnected,
     })),
     {
-      ...roomData.settings,
-      gameType: normalizeGameType((roomData.settings as any)?.gameType),
+      ...normalizeRoomSettings(roomData.settings),
     },
     newDealerIdx,
     handNum,
@@ -1089,5 +1161,6 @@ async function startNextHand(io: Server, roomId: string) {
   await saveGameState(state);
 
   broadcastGameState(io, roomId, state);
-  scheduleCurrentPlayerAction(io, roomId, state);
+  if (shouldAutoRunout(state)) startDelayedRunout(io, roomId);
+  else scheduleCurrentPlayerAction(io, roomId, state);
 }

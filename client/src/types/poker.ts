@@ -44,6 +44,20 @@ export interface HandResult {
 export interface GameState {
   roomId: string;
   gameType?: GameType;
+  bombPot?: {
+    enabled: boolean;
+    active: boolean;
+    amount: number;
+    interval: number;
+    handsUntilNext: number;
+  };
+  twoSevenBonus?: {
+    winnerId: string;
+    winnerName: string;
+    amountPerPlayer: number;
+    total: number;
+    collectedFrom: Array<{ playerId: string; playerName: string; amount: number }>;
+  };
   handNumber: number;
   stage: GameStage;
   communityCards: Card[];
@@ -97,6 +111,11 @@ export interface RoomSettings {
   bigBlind: number;
   maxPlayers: number;
   actionTimeout: number;
+  bombPotEnabled: boolean;
+  bombPotAmount: number;
+  bombPotInterval: number;
+  twoSevenEnabled: boolean;
+  twoSevenAmount: number;
 }
 
 export interface Room {
@@ -150,6 +169,10 @@ export interface ClientToServerEvents {
   'room:add_bot': (cb: (res: { success: boolean }) => void) => void;
   'room:host_manage_player': (
     payload: { targetPlayerId: string; action: 'set_chips' | 'kick'; chips?: number },
+    cb: (res: { success: boolean; error?: string }) => void
+  ) => void;
+  'room:update_settings': (
+    payload: { settings: Partial<Pick<RoomSettings, 'smallBlind' | 'bigBlind' | 'bombPotEnabled' | 'bombPotAmount' | 'bombPotInterval' | 'twoSevenEnabled' | 'twoSevenAmount'>> },
     cb: (res: { success: boolean; error?: string }) => void
   ) => void;
   'player:away': (payload: { away: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
