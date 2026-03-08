@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --felt: #1a4a2e;
+  --felt-light: #235c38;
+  --felt-dark: #0f2e1c;
+  --felt-darker: #0a1f12;
+  --gold: #d4a847;
+  --gold-light: #f0c96a;
+  --gold-dark: #8b6914;
+  --red-card: #c0392b;
+  --card-white: #fdf8f0;
+  --text-muted: #8a7a5a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  overflow-x: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+::-webkit-scrollbar-thumb { background: var(--gold-dark); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--gold); }
+
+/* Card styles */
+.card-red { color: var(--red-card); }
+.card-black { color: #1a1a1a; }
+
+/* Table felt gradient */
+.table-felt {
+  background: radial-gradient(ellipse at 50% 40%, #235c38 0%, #1a4a2e 50%, #0f2e1c 100%);
+}
+
+/* Chip animations */
+@keyframes chipFlyIn {
+  0% { transform: translateY(-40px) scale(0.5); opacity: 0; }
+  60% { transform: translateY(5px) scale(1.1); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.chip-fly { animation: chipFlyIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+/* Card deal animation */
+@keyframes dealCard {
+  0% { transform: translateY(-60px) rotate(-5deg); opacity: 0; }
+  100% { transform: translateY(0) rotate(0); opacity: 1; }
+}
+.card-deal { animation: dealCard 0.3s ease-out forwards; }
+
+/* Winner flash */
+@keyframes winnerGlow {
+  0%, 100% { box-shadow: 0 0 20px rgba(76,175,80,0.5), 0 0 40px rgba(76,175,80,0.2); }
+  50% { box-shadow: 0 0 40px rgba(76,175,80,1), 0 0 80px rgba(76,175,80,0.4); }
+}
+.winner-glow { animation: winnerGlow 1s ease-in-out infinite; }
+
+/* Gold shimmer */
+@keyframes goldShimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.gold-shimmer {
+  background: linear-gradient(90deg, #8b6914 0%, #d4a847 25%, #f0c96a 50%, #d4a847 75%, #8b6914 100%);
+  background-size: 200% auto;
+  animation: goldShimmer 3s linear infinite;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Pulse for active player */
+@keyframes activePulse {
+  0%, 100% { border-color: #d4a847; box-shadow: 0 0 8px rgba(212,168,71,0.3); }
+  50% { border-color: #f0c96a; box-shadow: 0 0 16px rgba(212,168,71,0.6); }
+}
+.active-player { animation: activePulse 1.5s ease-in-out infinite; }
+
+/* Input styles */
+input[type="range"] {
+  accent-color: var(--gold);
+}
+
+/* Tooltip */
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 100;
+}
