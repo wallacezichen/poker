@@ -87,16 +87,16 @@ function rankWord(v: number): string {
 function formatHandLabelEnDetailed(result: ReturnType<typeof evaluateHand>): string {
   if (result.rank >= 4) return result.name;
   if (result.rank === 3) {
-    const trip = Math.floor((result.tiebreak[0] || 0) / 100);
+    const trip = result.tiebreak[0] || 0;
     return `Set of ${rankWord(trip)}`;
   }
   if (result.rank === 2) {
-    const p1 = Math.floor((result.tiebreak[0] || 0) / 100);
-    const p2 = Math.floor((result.tiebreak[1] || 0) / 100);
+    const p1 = result.tiebreak[0] || 0;
+    const p2 = result.tiebreak[1] || 0;
     return `Two Pair(${rankWord(p1)}, ${rankWord(p2)})`;
   }
   if (result.rank === 1) {
-    const p = Math.floor((result.tiebreak[0] || 0) / 100);
+    const p = result.tiebreak[0] || 0;
     return `One Pair(${rankWord(p)})`;
   }
   const hi = result.tiebreak[0] || 0;
@@ -156,6 +156,11 @@ function evaluateSingleRunWinners(
         handLabel: formatHandLabelEnDetailed(results.get(w.id)!),
       });
     }
+    const bestLabel = runWinners.length > 0 ? formatHandLabelEnDetailed(results.get(runWinners[0].id)!) : '';
+    const line = { names: runWinners.map((w) => w.name), handLabel: bestLabel };
+    if (!state.runItTwice.runResults) state.runItTwice.runResults = [];
+    if (state.runItTwice.runResults.length <= runIndex) state.runItTwice.runResults.push(line);
+    else state.runItTwice.runResults[runIndex] = line;
   }
 
   return runWinnerInfos;
@@ -504,6 +509,13 @@ function advanceStage(state: FullGameState): void {
       return;
   }
 
+  // If one or fewer players can still act (others are all-in/folded),
+  // do not open a new betting round. This allows automatic runout.
+  if (countLiveNotAllIn(state) <= 1) {
+    state.playersToAct = [];
+    return;
+  }
+
   // Set first actor (first non-folded after dealer)
   const n = state.players.length;
   let first = (state.dealerIndex + 1) % n;
@@ -656,8 +668,9 @@ function resolveShowdownRunItTwice(state: FullGameState): void {
 function endHandByFolds(state: FullGameState, remaining: PlayerState[]): FullGameState {
   const winner = remaining[0];
   winner.chips += state.pot;
-  winner.revealedMask = 3;
-  winner.revealedCount = 2;
+  // Fold-win does not require a forced showdown; winner may choose whether to reveal.
+  winner.revealedMask = 0;
+  winner.revealedCount = 0;
   state.winners = [{
     playerId: winner.id,
     name: winner.name,
@@ -696,6 +709,7 @@ export function advanceRunoutStreet(state: FullGameState): FullGameState {
       state.runItTwice.phase = 'run1';
       state.runItTwice.baseStage = state.stage;
       state.runItTwice.summary = [];
+      state.runItTwice.runResults = [];
     }
 
     if (state.runItTwice.phase === 'run1_showdown') {

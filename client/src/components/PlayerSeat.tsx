@@ -12,6 +12,9 @@ interface PlayerSeatProps {
   isMe: boolean;
   isShowdown: boolean;
   isWinner?: boolean;
+  winAmount?: number;
+  rebuyCount?: number;
+  highlightedCardKeys?: Set<string>;
   communityCards?: CardType[];
   winsCount?: number;
   statusText?: string;
@@ -22,9 +25,14 @@ function formatChips(n: number): string {
   return String(n);
 }
 
+function cardKey(card?: CardType): string {
+  if (!card) return '';
+  return `${card.rank}${card.suit}`;
+}
+
 export default function PlayerSeat({
   player, isDealer, isSmallBlind, isBigBlind,
-  isActive, isMe, isShowdown, isWinner = false, communityCards = [], winsCount = 0, statusText, showCheckBubble = false,
+  isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false,
 }: PlayerSeatProps) {
   const showCards = isMe || (player.holeCards?.length ?? 0) > 0;
   const mask = player.revealedMask ?? 0;
@@ -43,6 +51,9 @@ export default function PlayerSeat({
   const liveBest = isMe ? evaluateBestHandName([...player.holeCards, ...communityCards]) : '';
   const handLabel = player.handResult ? formatHandLabelEnDetailed(player.handResult) : liveBest;
   const runItTwiceLabels = player.runItTwiceHandNamesZh;
+  const showPublicHandLabel = (player.revealedMask ?? 0) === 3;
+  const canSeeHandLabel = isMe || showPublicHandLabel;
+  const bestCardSet = highlightedCardKeys ?? new Set((player.handResult?.cards || []).map(cardKey));
 
   return (
     <div className={clsx('relative select-none', player.folded && 'opacity-45')}>
@@ -55,7 +66,12 @@ export default function PlayerSeat({
               faceDown={!showCards || !card}
               size="lg"
               index={i}
-              className={clsx('rotate-[-4deg]', i === 1 && 'rotate-[5deg]')}
+              className={clsx(
+                'rotate-[-4deg]',
+                i === 1 && 'rotate-[5deg]',
+                card && isShowdown && bestCardSet.size > 0 && !bestCardSet.has(cardKey(card)) && 'opacity-20 saturate-0 brightness-50 scale-[0.96]',
+                card && isShowdown && bestCardSet.size > 0 && bestCardSet.has(cardKey(card)) && 'ring-2 ring-yellow-300/80 shadow-[0_0_14px_rgba(250,204,21,0.55)]'
+              )}
             />
           ))}
         </div>
@@ -83,7 +99,14 @@ export default function PlayerSeat({
           )}
 
           <div className="text-[1.6rem] font-bold leading-tight max-w-[130px] truncate text-white">{player.name}</div>
-          <div className="text-[1.3rem] font-bold leading-tight mt-0.5 text-white">{formatChips(player.chips)}</div>
+          <div className="mt-0.5 flex items-center gap-2">
+            <div className="text-[1.3rem] font-bold leading-tight text-white">{formatChips(player.chips)}</div>
+            {isWinner && winAmount > 0 && (
+              <div className="px-2 py-0.5 rounded-md bg-yellow-300/25 border border-yellow-200/65 text-yellow-100 text-[0.95rem] font-extrabold leading-tight">
+                +{formatChips(winAmount)}
+              </div>
+            )}
+          </div>
 
           <div className={clsx(
             'absolute top-1 bg-emerald-500 text-white rounded-full px-2.5 py-0.5 text-[0.95rem] font-bold flex items-center gap-1',
@@ -123,15 +146,20 @@ export default function PlayerSeat({
           )}
           {player.allIn && <div className="text-sm text-rose-500 font-bold mt-1">ALL-IN</div>}
           {!player.isConnected && <div className="text-sm text-rose-500 font-bold mt-1">DISCONNECTED</div>}
+          {rebuyCount > 0 && (
+            <div className="absolute bottom-1 right-2 text-[0.95rem] font-extrabold leading-none text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
+              🔁{rebuyCount >= 2 ? rebuyCount : ''}
+            </div>
+          )}
         </div>
       </div>
 
-      {handLabel && !runItTwiceLabels && !player.folded && (
+      {handLabel && !runItTwiceLabels && !player.folded && canSeeHandLabel && (
         <div className="mt-1 text-center text-[0.95rem] font-semibold text-amber-200 tracking-wide">
           {handLabel}
         </div>
       )}
-      {runItTwiceLabels && runItTwiceLabels.length === 2 && !player.folded && (
+      {runItTwiceLabels && runItTwiceLabels.length === 2 && !player.folded && canSeeHandLabel && (
         <div className="mt-1 text-center text-[0.85rem] font-semibold text-yellow-200 tracking-wide leading-tight">
           <div>{runItTwiceLabels[0]}</div>
           <div>{runItTwiceLabels[1]}</div>
@@ -169,16 +197,16 @@ function rankWord(v: number): string {
 function formatHandLabelEnDetailed(result: NonNullable<PlayerState['handResult']>): string {
   if (result.rank >= 4) return result.name;
   if (result.rank === 3) {
-    const trip = Math.floor((result.tiebreak[0] || 0) / 100);
+    const trip = result.tiebreak[0] || 0;
     return `Set of ${rankWord(trip)}`;
   }
   if (result.rank === 2) {
-    const p1 = Math.floor((result.tiebreak[0] || 0) / 100);
-    const p2 = Math.floor((result.tiebreak[1] || 0) / 100);
+    const p1 = result.tiebreak[0] || 0;
+    const p2 = result.tiebreak[1] || 0;
     return `Two Pair(${rankWord(p1)}, ${rankWord(p2)})`;
   }
   if (result.rank === 1) {
-    const p = Math.floor((result.tiebreak[0] || 0) / 100);
+    const p = result.tiebreak[0] || 0;
     return `One Pair(${rankWord(p)})`;
   }
   const hi = result.tiebreak[0] || 0;

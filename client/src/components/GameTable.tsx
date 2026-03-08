@@ -31,6 +31,11 @@ function cardShortLabel(card?: { rank: string; suit: string }): string {
   return `${rank}${card.suit}`;
 }
 
+function cardKey(card?: { rank: string; suit: string }): string {
+  if (!card) return '';
+  return `${card.rank}${card.suit}`;
+}
+
 function valueToRank(v: number): string {
   if (v === 14) return 'A';
   if (v === 13) return 'K';
@@ -54,16 +59,16 @@ function formatHandLabelEnDetailed(result?: { rank: number; name: string; tiebre
   if (!result) return '';
   if (result.rank >= 4) return result.name;
   if (result.rank === 3) {
-    const trip = Math.floor((result.tiebreak[0] || 0) / 100);
+    const trip = result.tiebreak[0] || 0;
     return `Set of ${rankWord(trip)}`;
   }
   if (result.rank === 2) {
-    const p1 = Math.floor((result.tiebreak[0] || 0) / 100);
-    const p2 = Math.floor((result.tiebreak[1] || 0) / 100);
+    const p1 = result.tiebreak[0] || 0;
+    const p2 = result.tiebreak[1] || 0;
     return `Two Pair(${rankWord(p1)}, ${rankWord(p2)})`;
   }
   if (result.rank === 1) {
-    const p = Math.floor((result.tiebreak[0] || 0) / 100);
+    const p = result.tiebreak[0] || 0;
     return `One Pair(${rankWord(p)})`;
   }
   const hi = result.tiebreak[0] || 0;
@@ -99,7 +104,7 @@ export default function GameTable({
 }: GameTableProps) {
   const {
     chatMessages, joinRequests,
-    handResult, showHandResult, setShowHandResult, setHandResult, isGamePaused,
+    handResult, showHandResult, setShowHandResult, setHandResult, isGamePaused, rebuyCountByPlayerId,
   } = useGameStore();
 
   const [raiseAmount, setRaiseAmount] = useState(0);
@@ -149,10 +154,18 @@ export default function GameTable({
   const ownerName = room.players.find(p => p.id === room.hostId)?.name || 'HOST';
   const meInRoom = room.players.find(p => p.id === myPlayerId);
   const isAway = !!meInRoom?.isAway;
-  const winnerIds = new Set(
-    ((showHandResult ? handResult?.winners : undefined)?.map(w => w.playerId) ||
-      gameState.winners?.map(w => w.playerId) || [])
-  );
+  const winnerSource = (showHandResult ? handResult?.winners : undefined) || gameState.winners || [];
+  const winnerIds = new Set(winnerSource.map((w) => w.playerId));
+  const winnerAmountById = new Map(winnerSource.map((w) => [w.playerId, w.chipsWon]));
+  const isShowdownStage = gameState.stage === 'showdown';
+  const showdownHighlightCardKeys = (() => {
+    const set = new Set<string>();
+    for (const p of gameState.players) {
+      if (!winnerIds.has(p.id)) continue;
+      for (const c of (p.handResult?.cards || [])) set.add(cardKey(c));
+    }
+    return set;
+  })();
   const isHost = room.hostId === myPlayerId;
   const manageTarget = manageTargetId ? room.players.find((p) => p.id === manageTargetId) : undefined;
   const myRevealMask = myPlayer?.revealedMask ?? 0;
@@ -173,6 +186,145 @@ export default function GameTable({
   const showPreflopRunGrid = showBothRunBoards && sharedStreetCount === 0;
   const showFlopRunGrid = showBothRunBoards && sharedStreetCount === 3;
   const showTurnRunGrid = showBothRunBoards && sharedStreetCount === 4;
+  const showdownSummaryLines = (() => {
+    if (runItTwice?.runResults?.length) {
+      return runItTwice.runResults
+        .filter((r) => !!r && r.names.length > 0 && !!r.handLabel)
+        .map((r) => `${r.names.join(', ')}: ${r.handLabel}`);
+    }
+
+    const playerById = new Map(gameState.players.map((p) => [p.id, p]));
+    const groupedByHand = new Map<string, string[]>();
+    for (const w of winnerSource) {
+      const p = playerById.get(w.playerId);
+      const handLabel = p?.handResult ? formatHandLabelEnDetailed(p.handResult) : (w.handName || '');
+      if (!handLabel) continue;
+      if (!groupedByHand.has(handLabel)) groupedByHand.set(handLabel, []);
+      groupedByHand.get(handLabel)!.push(w.name);
+    }
+    const lines = Array.from(groupedByHand.entries()).map(([handLabel, names]) => {
+      const uniqNames = Array.from(new Set(names));
+      return `${uniqNames.join(', ')}: ${handLabel}`;
+    });
+    if (lines.length > 0) return lines;
+
+    return showdownPlayers.slice(0, 2).map((p) => `${p.name}: ${formatHandLabelEnDetailed(p.handResult)}`);
+  })();
+  const cardShowdownClass = (card?: { rank: string; suit: string }) => {
+    if (!card || !isShowdownStage || showdownHighlightCardKeys.size === 0) return '';
+    if (!showdownHighlightCardKeys.has(cardKey(card))) {
+      return 'opacity-20 saturate-0 brightness-50 scale-[0.96]';
+    }
+    return 'ring-2 ring-yellow-300/80 shadow-[0_0_14px_rgba(250,204,21,0.55)]';
+  };
+
+  const triggerPrimaryAction = () => {
+    if (!canAct) return;
+    if (callAmt > 0) {
+      onAction('call');
+    } else if (canQuickBet) {
+      onAction('raise', minRaise);
+    }
+  };
+
+  const openRaiseAction = () => {
+    if (!canAct || !canRaise || !myPlayer) return;
+    const bbDefault = gameState.currentBet + gameState.bigBlind;
+    const initial = Math.min(maxTotalBet, Math.max(minRaise, bbDefault));
+    setRaiseAmount(initial);
+    setShowRaisePanel(true);
+  };
+
+  const submitRaiseAction = () => {
+    if (!canAct || !canRaise || !showRaisePanel) return;
+    onAction('raise', safeRaise);
+    setShowRaisePanel(false);
+  };
+
+  const triggerCheckAction = () => {
+    if (canAct && canCheck) onAction('check');
+  };
+
+  const triggerFoldAction = () => {
+    if (canAct) onAction('fold');
+  };
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName.toLowerCase();
+        const typing = tag === 'input' || tag === 'textarea' || target.isContentEditable;
+        if (typing) return;
+      }
+
+      const k = e.key.toLowerCase();
+
+      if (showRunItTwicePanel && myRunItTwiceVote === null) {
+        if (k === 'y') {
+          e.preventDefault();
+          onRunItTwiceVote(true);
+          return;
+        }
+        if (k === 'n') {
+          e.preventDefault();
+          onRunItTwiceVote(false);
+          return;
+        }
+      }
+
+      if (showHandResult || gameState.stage === 'showdown') return;
+
+      if (k === 'escape' && showRaisePanel) {
+        e.preventDefault();
+        setShowRaisePanel(false);
+        return;
+      }
+      if (k === 'c' && showPrimaryAction) {
+        e.preventDefault();
+        triggerPrimaryAction();
+        return;
+      }
+      if (k === 'r') {
+        e.preventDefault();
+        if (showRaisePanel) submitRaiseAction();
+        else openRaiseAction();
+        return;
+      }
+      if (k === 'k') {
+        e.preventDefault();
+        triggerCheckAction();
+        return;
+      }
+      if (k === 'f') {
+        e.preventDefault();
+        triggerFoldAction();
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    canAct,
+    canCheck,
+    canQuickBet,
+    callAmt,
+    minRaise,
+    canRaise,
+    maxTotalBet,
+    myPlayer,
+    gameState.currentBet,
+    gameState.bigBlind,
+    gameState.stage,
+    showHandResult,
+    showPrimaryAction,
+    showRaisePanel,
+    safeRaise,
+    showRunItTwicePanel,
+    myRunItTwiceVote,
+    onAction,
+    onRunItTwiceVote,
+  ]);
 
   useEffect(() => {
     if (!handResult?.winners?.length) return;
@@ -489,6 +641,7 @@ export default function GameTable({
                         faceDown={false}
                         size="xl"
                         index={i}
+                        className={cardShowdownClass(runItTwice?.boards?.[0]?.[i])}
                       />
                     ))}
                   </div>
@@ -500,6 +653,7 @@ export default function GameTable({
                         faceDown={false}
                         size="xl"
                         index={i}
+                        className={cardShowdownClass(gameState.communityCards[i])}
                       />
                     ))}
                   </div>
@@ -514,6 +668,7 @@ export default function GameTable({
                         faceDown={false}
                         size="xl"
                         index={i}
+                        className={cardShowdownClass(runItTwice?.boards?.[0]?.[i])}
                       />
                     ))}
                   </div>
@@ -525,6 +680,7 @@ export default function GameTable({
                         faceDown={false}
                         size="xl"
                         index={i}
+                        className={cardShowdownClass(i >= 3 ? gameState.communityCards[i] : undefined)}
                       />
                     ))}
                   </div>
@@ -539,6 +695,7 @@ export default function GameTable({
                         faceDown={false}
                         size="xl"
                         index={i}
+                        className={cardShowdownClass(runItTwice?.boards?.[0]?.[i])}
                       />
                     ))}
                   </div>
@@ -550,6 +707,7 @@ export default function GameTable({
                         faceDown={false}
                         size="xl"
                         index={i}
+                        className={cardShowdownClass(i === 4 ? gameState.communityCards[4] : undefined)}
                       />
                     ))}
                   </div>
@@ -565,6 +723,7 @@ export default function GameTable({
                           faceDown={false}
                           size="xl"
                           index={i}
+                          className={cardShowdownClass(runItTwice?.boards?.[0]?.[i])}
                         />
                       ))}
                     </div>
@@ -579,6 +738,7 @@ export default function GameTable({
                             faceDown={false}
                             size="xl"
                             index={i}
+                            className={cardShowdownClass(runItTwice?.boards?.[0]?.[i])}
                           />
                           <Card
                             key={`run2-${i}`}
@@ -586,6 +746,7 @@ export default function GameTable({
                             faceDown={false}
                             size="xl"
                             index={i}
+                            className={cardShowdownClass(gameState.communityCards[i])}
                           />
                         </div>
                       ))}
@@ -600,6 +761,7 @@ export default function GameTable({
                           faceDown={false}
                           size="xl"
                           index={i}
+                          className={cardShowdownClass(i < sharedStreetCount ? undefined : gameState.communityCards[i])}
                         />
                       ))}
                     </div>
@@ -614,6 +776,7 @@ export default function GameTable({
                       faceDown={false}
                       size="xl"
                       index={i}
+                      className={cardShowdownClass(gameState.communityCards[i])}
                     />
                   ))}
                 </div>
@@ -622,19 +785,9 @@ export default function GameTable({
               {showHandResult && handResult && (
                 <div className="mt-3 flex flex-col items-center gap-2">
                   <div className="text-sm text-yellow-200 bg-black/30 rounded-xl px-4 py-2 border border-yellow-300/30 leading-tight">
-                    {runItTwice?.summary?.length ? (
-                      runItTwice.summary.map((item, idx) => (
-                        <div key={`${item.name}-${idx}`}>
-                          {item.name}: {item.handLabel}
-                        </div>
-                      ))
-                    ) : (
-                      showdownPlayers.slice(0, 2).map((p) => (
-                        <div key={p.id}>
-                          {p.name}: {formatHandLabelEnDetailed(p.handResult)}
-                        </div>
-                      ))
-                    )}
+                    {showdownSummaryLines.map((line, idx) => (
+                      <div key={`summary-${idx}`}>{line}</div>
+                    ))}
                   </div>
                   <button
                     onClick={() => {
@@ -700,6 +853,9 @@ export default function GameTable({
                   isMe={roomPlayer.id === myPlayerId}
                   isShowdown={gameState.stage === 'showdown'}
                   isWinner={winnerIds.has(roomPlayer.id)}
+                  winAmount={winnerAmountById.get(roomPlayer.id) || 0}
+                  rebuyCount={rebuyCountByPlayerId[roomPlayer.id] || 0}
+                  highlightedCardKeys={showdownHighlightCardKeys}
                   communityCards={gameState.communityCards}
                   winsCount={winsByPlayer[roomPlayer.id] || 0}
                   statusText={!inHand ? (roomPlayer.isAway ? 'AWAY' : 'WAIT NEXT HAND') : undefined}
@@ -852,40 +1008,27 @@ export default function GameTable({
                 hotkey="C"
                 label={callAmt > 0 ? `CALL ${formatChips(callAmt)}` : `BET ${formatChips(gameState.bigBlind)}`}
                 disabled={!canAct}
-                onClick={() => {
-                  if (!canAct) return;
-                  if (callAmt > 0) {
-                    onAction('call');
-                  } else if (canQuickBet) {
-                    onAction('raise', minRaise);
-                  }
-                }}
+                onClick={triggerPrimaryAction}
               />
             )}
             <ActionBox
               hotkey="R"
               label="RAISE"
               disabled={!canAct || !canRaise}
-              onClick={() => {
-                if (!canAct || !canRaise || !myPlayer) return;
-                const bbDefault = gameState.currentBet + gameState.bigBlind;
-                const initial = Math.min(maxTotalBet, Math.max(minRaise, bbDefault));
-                setRaiseAmount(initial);
-                setShowRaisePanel(true);
-              }}
+              onClick={openRaiseAction}
             />
             <ActionBox
               hotkey="K"
               label="CHECK"
               disabled={!canAct || !canCheck}
-              onClick={() => canAct && canCheck && onAction('check')}
+              onClick={triggerCheckAction}
             />
             <ActionBox
               hotkey="F"
               label="FOLD"
               danger
               disabled={!canAct}
-              onClick={() => canAct && onAction('fold')}
+              onClick={triggerFoldAction}
             />
             </div>
           )}
@@ -948,10 +1091,7 @@ export default function GameTable({
                   BACK
                 </button>
                 <button
-                  onClick={() => {
-                    onAction('raise', safeRaise);
-                    setShowRaisePanel(false);
-                  }}
+                  onClick={submitRaiseAction}
                   className="rounded-lg border border-emerald-500 text-emerald-400 px-6 py-2 text-2xl font-semibold"
                 >
                   RAISE

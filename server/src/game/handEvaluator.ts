@@ -105,42 +105,50 @@ function evaluate5(cards: Card[]): HandResult {
   const rankCount: Record<string, number> = {};
   for (const r of ranks) rankCount[r] = (rankCount[r] || 0) + 1;
 
-  // Sort by count desc, then by value desc
-  const groups = Object.entries(rankCount).sort((a, b) => {
-    if (b[1] !== a[1]) return b[1] - a[1];
-    return rankValue(b[0] as Rank) - rankValue(a[0] as Rank);
-  });
+  // Sort by count desc, then rank value desc (for consistent tie-break vectors).
+  const groups = Object.entries(rankCount)
+    .map(([r, c]) => ({ val: rankValue(r as Rank), count: c }))
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      return b.val - a.val;
+    });
 
-  const counts = groups.map(g => g[1]);
-  // Tiebreak array: sorted group values * 100 + count, then kickers
-  const tiebreak = groups.map(([r, c]) => rankValue(r as Rank) * 100 + c);
+  const counts = groups.map(g => g.count);
+  const pairVals = groups.filter(g => g.count === 2).map(g => g.val).sort((a, b) => b - a);
+  const singleVals = groups.filter(g => g.count === 1).map(g => g.val).sort((a, b) => b - a);
 
   if (isFlush && isStraight) {
     const r = straightHigh === 14 ? HAND_RANK.ROYAL_FLUSH : HAND_RANK.STRAIGHT_FLUSH;
     return { rank: r, name: HAND_NAME_EN[r], nameZh: HAND_NAME_ZH[r], tiebreak: [straightHigh] };
   }
   if (counts[0] === 4) {
-    return { rank: HAND_RANK.FOUR_OF_A_KIND, name: HAND_NAME_EN[7], nameZh: HAND_NAME_ZH[7], tiebreak };
+    const quadVal = groups.find(g => g.count === 4)!.val;
+    const kicker = singleVals[0] ?? 0;
+    return { rank: HAND_RANK.FOUR_OF_A_KIND, name: HAND_NAME_EN[7], nameZh: HAND_NAME_ZH[7], tiebreak: [quadVal, kicker] };
   }
   // Short deck: Flush > Full House
   if (isFlush) {
     return { rank: HAND_RANK.FLUSH, name: HAND_NAME_EN[6], nameZh: HAND_NAME_ZH[6], tiebreak: vals };
   }
   if (counts[0] === 3 && counts[1] === 2) {
-    return { rank: HAND_RANK.FULL_HOUSE, name: HAND_NAME_EN[5], nameZh: HAND_NAME_ZH[5], tiebreak };
+    const tripVal = groups.find(g => g.count === 3)!.val;
+    const pairVal = groups.find(g => g.count === 2)!.val;
+    return { rank: HAND_RANK.FULL_HOUSE, name: HAND_NAME_EN[5], nameZh: HAND_NAME_ZH[5], tiebreak: [tripVal, pairVal] };
   }
   // Short deck: Three of a Kind > Straight
   if (counts[0] === 3) {
-    return { rank: HAND_RANK.THREE_OF_A_KIND, name: HAND_NAME_EN[3], nameZh: HAND_NAME_ZH[3], tiebreak };
+    const tripVal = groups.find(g => g.count === 3)!.val;
+    return { rank: HAND_RANK.THREE_OF_A_KIND, name: HAND_NAME_EN[3], nameZh: HAND_NAME_ZH[3], tiebreak: [tripVal, ...singleVals] };
   }
   if (isStraight) {
     return { rank: HAND_RANK.STRAIGHT, name: HAND_NAME_EN[4], nameZh: HAND_NAME_ZH[4], tiebreak: [straightHigh] };
   }
   if (counts[0] === 2 && counts[1] === 2) {
-    return { rank: HAND_RANK.TWO_PAIR, name: HAND_NAME_EN[2], nameZh: HAND_NAME_ZH[2], tiebreak };
+    const kicker = singleVals[0] ?? 0;
+    return { rank: HAND_RANK.TWO_PAIR, name: HAND_NAME_EN[2], nameZh: HAND_NAME_ZH[2], tiebreak: [pairVals[0], pairVals[1], kicker] };
   }
   if (counts[0] === 2) {
-    return { rank: HAND_RANK.ONE_PAIR, name: HAND_NAME_EN[1], nameZh: HAND_NAME_ZH[1], tiebreak };
+    return { rank: HAND_RANK.ONE_PAIR, name: HAND_NAME_EN[1], nameZh: HAND_NAME_ZH[1], tiebreak: [pairVals[0], ...singleVals] };
   }
   return { rank: HAND_RANK.HIGH_CARD, name: HAND_NAME_EN[0], nameZh: HAND_NAME_ZH[0], tiebreak: vals };
 }
@@ -176,11 +184,25 @@ export function evaluateHand(cards: Card[]): HandResult {
   if (cards.length === 5) return evaluate5(cards);
 
   let best: HandResult | null = null;
+  let bestCombos: Card[][] = [];
   for (const combo of combinations(cards, 5)) {
     const result = evaluate5(combo);
     if (!best || compareHands(result, best) > 0) {
       best = { ...result, cards: combo };
+      bestCombos = [combo];
+    } else if (best && compareHands(result, best) === 0) {
+      bestCombos.push(combo);
     }
   }
-  return best!;
+  const seen = new Set<string>();
+  const mergedBestCards: Card[] = [];
+  for (const combo of bestCombos) {
+    for (const c of combo) {
+      const key = `${c.rank}${c.suit}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      mergedBestCards.push(c);
+    }
+  }
+  return { ...best!, cards: mergedBestCards };
 }

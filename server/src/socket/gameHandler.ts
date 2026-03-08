@@ -26,6 +26,7 @@ const awayPlayersByRoom = new Map<string, Set<string>>();
 const pausedRooms = new Set<string>();
 type PendingJoinRequest = { requestId: string; roomId: string; playerName: string; socketId: string; requestedAt: string };
 const pendingJoinRequestsByRoom = new Map<string, Map<string, PendingJoinRequest>>();
+const pendingRebuyPromptsByRoom = new Map<string, Set<string>>();
 
 const PLAYER_COLORS = [
   '#e74c3c', '#3498db', '#2ecc71', '#f39c12',
@@ -79,6 +80,18 @@ function removePendingRequestsBySocket(socketId: string): void {
     }
     if (map.size === 0) pendingJoinRequestsByRoom.delete(roomId);
   }
+}
+
+function setPendingRebuyPrompt(roomId: string, playerId: string, pending: boolean): void {
+  if (!pendingRebuyPromptsByRoom.has(roomId)) pendingRebuyPromptsByRoom.set(roomId, new Set());
+  const set = pendingRebuyPromptsByRoom.get(roomId)!;
+  if (pending) set.add(playerId);
+  else set.delete(playerId);
+  if (set.size === 0) pendingRebuyPromptsByRoom.delete(roomId);
+}
+
+function hasPendingRebuyPrompt(roomId: string, playerId: string): boolean {
+  return pendingRebuyPromptsByRoom.get(roomId)?.has(playerId) ?? false;
 }
 
 export function registerGameHandlers(
@@ -660,6 +673,49 @@ export function registerGameHandlers(
   });
 
   // ============================================================
+  // REBUY OR LEAVE (for busted player between hands)
+  // ============================================================
+  socket.on('game:rebuy_or_leave', async ({ rebuy, buyIn }, cb) => {
+    const session = socketToPlayer.get(socket.id);
+    if (!session) return cb({ success: false, error: 'Not in a room' });
+    const { roomId, playerId } = session;
+
+    const roomData = await getRoom(roomId);
+    if (!roomData) return cb({ success: false, error: 'Room not found' });
+
+    const players = await getPlayers(roomId);
+    const player = players.find(p => p.id === playerId);
+    if (!player) return cb({ success: false, error: 'Player not found' });
+    if (player.chips > 0) return cb({ success: false, error: 'Re-buy only available when busted' });
+
+    setPendingRebuyPrompt(roomId, playerId, false);
+
+    if (!rebuy) {
+      await removePlayer(roomId, playerId);
+      const sId = roomSockets.get(roomId)?.get(playerId);
+      if (sId) {
+        io.to(sId).emit('room:player_kicked', { roomId, reason: 'You declined re-buy and left the room.' });
+      }
+      roomSockets.get(roomId)?.delete(playerId);
+      socketToPlayer.delete(socket.id);
+      socket.leave(roomId);
+    } else {
+      const minBuyIn = roomData.settings.bigBlind;
+      const nextBuyIn = Math.max(minBuyIn, Math.floor(buyIn ?? roomData.settings.startingChips));
+      await updatePlayerChips(roomId, playerId, nextBuyIn);
+      setPlayerAway(roomId, playerId, false);
+      io.to(roomId).emit('game:player_rebuy', { playerId });
+    }
+
+    const room = await getFullRoom(roomId);
+    if (room) io.to(roomId).emit('room:updated', room);
+    cb({ success: true });
+
+    // Continue flow automatically once decision is made.
+    await startNextHand(io, roomId);
+  });
+
+  // ============================================================
   // PLAYER ACTION
   // ============================================================
   socket.on('game:action', async ({ action, amount }, cb) => {
@@ -747,6 +803,7 @@ export function registerGameHandlers(
         awayPlayersByRoom.delete(roomId);
         pausedRooms.delete(roomId);
         pendingJoinRequestsByRoom.delete(roomId);
+        pendingRebuyPromptsByRoom.delete(roomId);
         clearRunoutTimer(roomId);
       }
     }
@@ -964,6 +1021,21 @@ async function startNextHand(io: Server, roomId: string) {
   if (!roomData) return;
 
   const players = await getPlayers(roomId);
+  const bustedHumans = players.filter(p => !p.isBot && p.chips <= 0 && p.isConnected);
+  if (bustedHumans.length > 0) {
+    for (const p of bustedHumans) {
+      if (hasPendingRebuyPrompt(roomId, p.id)) continue;
+      const socketId = roomSockets.get(roomId)?.get(p.id);
+      if (!socketId) continue;
+      setPendingRebuyPrompt(roomId, p.id, true);
+      io.to(socketId).emit('game:rebuy_prompt', {
+        minBuyIn: roomData.settings.bigBlind,
+        defaultBuyIn: roomData.settings.startingChips,
+      });
+    }
+    return;
+  }
+
   const activePlayers = players.filter(p => p.chips > 0 && !isPlayerAway(roomId, p.id));
 
   if (activePlayers.length < 2) {

@@ -14,15 +14,17 @@ export default function RoomPage() {
 
   const {
     startGame, addBot, performAction, sendChat, nextHand,
-    leaveRoom, joinRoom, resumeRoom, setAway, setPause, decideJoinRequest, hostManagePlayer, revealCards, voteRunItTwice,
+    leaveRoom, joinRoom, resumeRoom, setAway, setPause, decideJoinRequest, hostManagePlayer, revealCards, voteRunItTwice, respondRebuy,
   } = useSocket();
-  const { room, gameState, myPlayerId, isConnected, joinPending, setJoinPending } = useGameStore();
+  const { room, gameState, myPlayerId, isConnected, joinPending, setJoinPending, rebuyPrompt, setRebuyPrompt } = useGameStore();
 
   const [joining, setJoining] = useState(false);
   const [needsName, setNeedsName] = useState(false);
   const [tempName, setTempName] = useState('');
   const [resuming, setResuming] = useState(false);
   const [resumeChecked, setResumeChecked] = useState(false);
+  const [rebuyAmount, setRebuyAmount] = useState('');
+  const [rebuySubmitting, setRebuySubmitting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,6 +112,36 @@ export default function RoomPage() {
   async function handleRunItTwiceVote(agree: boolean) {
     const res = await voteRunItTwice(agree);
     if (!res.success) alert(res.error || 'Vote failed');
+  }
+
+  useEffect(() => {
+    if (!rebuyPrompt) return;
+    setRebuyAmount(String(rebuyPrompt.defaultBuyIn));
+  }, [rebuyPrompt?.defaultBuyIn, rebuyPrompt?.minBuyIn]);
+
+  async function handleConfirmRebuy() {
+    if (!rebuyPrompt) return;
+    const amount = Math.max(rebuyPrompt.minBuyIn, Math.floor(Number(rebuyAmount) || 0));
+    if (amount < rebuyPrompt.minBuyIn) {
+      alert(`Minimum buy-in is ${rebuyPrompt.minBuyIn}`);
+      return;
+    }
+    setRebuySubmitting(true);
+    const res = await respondRebuy(true, amount);
+    setRebuySubmitting(false);
+    if (!res.success) return alert(res.error || 'Re-buy failed');
+    setRebuyPrompt(null);
+  }
+
+  async function handleDeclineRebuy() {
+    if (!rebuyPrompt) return;
+    if (!confirm('Decline re-buy and leave this room?')) return;
+    setRebuySubmitting(true);
+    const res = await respondRebuy(false);
+    setRebuySubmitting(false);
+    if (!res.success) return alert(res.error || 'Action failed');
+    setRebuyPrompt(null);
+    router.push('/');
   }
 
   // Loading state
@@ -237,20 +269,60 @@ export default function RoomPage() {
   }
 
   return (
-    <GameTable
-      gameState={gameState}
-      room={room}
-      myPlayerId={myPlayerId || ''}
-      onAction={handleAction}
-      onSendChat={sendChat}
-      onSetAway={handleSetAway}
-      onJoinRequestDecision={handleJoinRequestDecision}
-      onHostManagePlayer={handleHostManagePlayer}
-      onSetPause={handleSetPause}
-      onNextHand={nextHand}
-      onRevealCards={handleRevealCards}
-      onRunItTwiceVote={handleRunItTwiceVote}
-      onLeave={handleLeave}
-    />
+    <div className="relative">
+      <GameTable
+        gameState={gameState}
+        room={room}
+        myPlayerId={myPlayerId || ''}
+        onAction={handleAction}
+        onSendChat={sendChat}
+        onSetAway={handleSetAway}
+        onJoinRequestDecision={handleJoinRequestDecision}
+        onHostManagePlayer={handleHostManagePlayer}
+        onSetPause={handleSetPause}
+        onNextHand={nextHand}
+        onRevealCards={handleRevealCards}
+        onRunItTwiceVote={handleRunItTwiceVote}
+        onLeave={handleLeave}
+      />
+      {rebuyPrompt && (
+        <div className="absolute inset-0 z-[90] flex items-center justify-center bg-black/65 p-4">
+          <div className="w-full max-w-md rounded-xl border border-white/25 bg-[#10151f] p-5 text-white shadow-[0_20px_48px_rgba(0,0,0,0.5)]">
+            <div className="text-lg font-bold">You are out of chips</div>
+            <div className="mt-2 text-sm text-white/75">
+              Buy back in to continue this room.
+            </div>
+            <div className="mt-4">
+              <div className="mb-1 text-xs uppercase tracking-wide text-white/50">Buy-in Amount</div>
+              <input
+                type="number"
+                min={rebuyPrompt.minBuyIn}
+                step={1}
+                value={rebuyAmount}
+                onChange={(e) => setRebuyAmount(e.target.value)}
+                className="w-full rounded border border-white/25 bg-black/35 px-3 py-2 text-white outline-none focus:border-emerald-400"
+              />
+              <div className="mt-1 text-xs text-white/55">Minimum: {rebuyPrompt.minBuyIn}</div>
+            </div>
+            <div className="mt-5 flex items-center gap-2">
+              <button
+                disabled={rebuySubmitting}
+                onClick={handleConfirmRebuy}
+                className="flex-1 rounded bg-emerald-600 px-3 py-2 font-semibold hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {rebuySubmitting ? 'Processing...' : 'Re-buy In'}
+              </button>
+              <button
+                disabled={rebuySubmitting}
+                onClick={handleDeclineRebuy}
+                className="flex-1 rounded bg-rose-700 px-3 py-2 font-semibold hover:bg-rose-600 disabled:opacity-50"
+              >
+                Decline & Leave
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

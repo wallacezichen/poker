@@ -36,6 +36,10 @@ interface GameStore {
   // Pending join approval state (joiner)
   joinPending: { roomId: string; requestId?: string; status: 'pending' | 'denied'; error?: string } | null;
   setJoinPending: (v: { roomId: string; requestId?: string; status: 'pending' | 'denied'; error?: string } | null) => void;
+  rebuyPrompt: { minBuyIn: number; defaultBuyIn: number } | null;
+  setRebuyPrompt: (v: { minBuyIn: number; defaultBuyIn: number } | null) => void;
+  rebuyCountByPlayerId: Record<string, number>;
+  addRebuyBadgePlayer: (playerId: string) => void;
 
   // UI state
   showHandResult: boolean;
@@ -83,6 +87,17 @@ export const useGameStore = create<GameStore>((set) => ({
 
   joinPending: null,
   setJoinPending: (joinPending) => set({ joinPending }),
+  rebuyPrompt: null,
+  setRebuyPrompt: (rebuyPrompt) => set({ rebuyPrompt }),
+  rebuyCountByPlayerId: {},
+  addRebuyBadgePlayer: (playerId) => set((s) => {
+    return {
+      rebuyCountByPlayerId: {
+        ...s.rebuyCountByPlayerId,
+        [playerId]: (s.rebuyCountByPlayerId[playerId] || 0) + 1,
+      },
+    };
+  }),
 
   showHandResult: false,
   setShowHandResult: (showHandResult) => set({ showHandResult }),
@@ -103,6 +118,8 @@ export const useGameStore = create<GameStore>((set) => ({
     chatMessages: [],
     joinRequests: [],
     joinPending: null,
+    rebuyPrompt: null,
+    rebuyCountByPlayerId: {},
     showHandResult: false,
     isGamePaused: false,
     timerSeconds: 30,

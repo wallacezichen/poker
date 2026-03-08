@@ -22,7 +22,7 @@ export function useSocket() {
   const {
     setConnected, setRoom, setMyPlayerId,
     setGameState, setHandResult, addChatMessage,
-    setShowHandResult, setGamePaused, addJoinRequest, removeJoinRequest, clearJoinRequests, setJoinPending,
+    setShowHandResult, setGamePaused, addJoinRequest, removeJoinRequest, clearJoinRequests, setJoinPending, setRebuyPrompt, addRebuyBadgePlayer,
   } = useGameStore();
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -127,6 +127,8 @@ export function useSocket() {
 
     s.on('chat:message', (msg) => addChatMessage(msg));
     s.on('game:paused', (paused) => setGamePaused(paused));
+    s.on('game:rebuy_prompt', (payload) => setRebuyPrompt(payload));
+    s.on('game:player_rebuy', ({ playerId }) => addRebuyBadgePlayer(playerId));
 
     s.on('player:disconnected', (playerId) => {
       const room = useGameStore.getState().room;
@@ -164,6 +166,8 @@ export function useSocket() {
       s.off('game:hand_result');
       s.off('chat:message');
       s.off('game:paused');
+      s.off('game:rebuy_prompt');
+      s.off('game:player_rebuy');
       s.off('player:disconnected');
       s.off('player:connected');
       stopTimer();
@@ -321,6 +325,12 @@ export function useSocket() {
     });
   }
 
+  function respondRebuy(rebuy: boolean, buyIn?: number) {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      getSocket().emit('game:rebuy_or_leave', { rebuy, buyIn }, (res) => resolve(res));
+    });
+  }
+
   function sendChat(message: string) {
     getSocket().emit('chat:send', { message });
   }
@@ -351,6 +361,7 @@ export function useSocket() {
     performAction,
     revealCards,
     voteRunItTwice,
+    respondRebuy,
     sendChat,
     nextHand,
     leaveRoom,

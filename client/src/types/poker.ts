@@ -66,6 +66,7 @@ export interface RunItTwiceState {
   votes: Record<string, boolean | null>;
   boards?: [Card[], Card[]];
   summary?: Array<{ name: string; handLabel: string }>;
+  runResults?: Array<{ names: string[]; handLabel: string }>;
   baseStage?: GameStage;
   phase?: 'run1' | 'run1_showdown' | 'run2' | 'run2_showdown' | 'final';
 }
@@ -154,6 +155,10 @@ export interface ClientToServerEvents {
   'game:start': (cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:reveal_cards': (payload: { slot: 1 | 2 }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:run_it_twice_vote': (payload: { agree: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
+  'game:rebuy_or_leave': (
+    payload: { rebuy: boolean; buyIn?: number },
+    cb: (res: { success: boolean; error?: string }) => void
+  ) => void;
   'game:action': (payload: { action: ActionType; amount?: number }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'chat:send': (payload: { message: string }) => void;
   'game:next_hand': () => void;
@@ -168,8 +173,10 @@ export interface ServerToClientEvents {
   'game:state': (state: GameState) => void;
   'game:action_made': (entry: ActionLogEntry & { state: GameState }) => void;
   'game:hand_result': (result: HandResultPayload) => void;
+  'game:player_rebuy': (payload: { playerId: string }) => void;
   'chat:message': (msg: ChatMessage) => void;
   'game:paused': (paused: boolean) => void;
+  'game:rebuy_prompt': (payload: { minBuyIn: number; defaultBuyIn: number }) => void;
   'player:connected': (playerId: string) => void;
   'player:disconnected': (playerId: string) => void;
   'error': (msg: string) => void;
