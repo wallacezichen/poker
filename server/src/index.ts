@@ -8,7 +8,10 @@ import { registerGameHandlers } from './socket/gameHandler';
 import roomsRouter from './routes/rooms';
 
 const PORT = parseInt(process.env.PORT || '4000');
+const HOST = process.env.HOST || '0.0.0.0';
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:3000';
+const hasSupabaseUrl = !!process.env.SUPABASE_URL;
+const hasSupabaseServiceKey = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const app = express();
 const httpServer = createServer(app);
@@ -38,9 +41,12 @@ io.on('connection', (socket) => {
   registerGameHandlers(io, socket);
 });
 
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, HOST, () => {
   console.log(`\n🃏 Short Deck Poker Server`);
-  console.log(`   Running on port ${PORT}`);
+  console.log(`   Listening on ${HOST}:${PORT}`);
+  console.log(`   PORT env: ${process.env.PORT ?? '(missing)'}`);
   console.log(`   Allowed origin: ${CLIENT_URL}`);
-  console.log(`   Health: http://localhost:${PORT}/health\n`);
+  console.log(`   SUPABASE_URL set: ${hasSupabaseUrl}`);
+  console.log(`   SUPABASE_SERVICE_ROLE_KEY set: ${hasSupabaseServiceKey}`);
+  console.log(`   Health: /health\n`);
 });
