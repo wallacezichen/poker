@@ -7,3 +7,5 @@ client/node_modules/
 server/node_modules/
 client/.next/
 server/dist/
+.vercel
+*.DS_Store

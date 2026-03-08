@@ -26,6 +26,8 @@ export interface PlayerState {
   isBot: boolean;
   isConnected: boolean;
   seatIndex: number;
+  revealedMask?: number; // bitmask: 1=left card, 2=right card
+  revealedCount?: number;
   handResult?: HandResult;
 }
 
@@ -131,10 +133,15 @@ export interface ClientToServerEvents {
   'room:resume': (payload: { roomId: string; playerId: string }, cb: (res: RoomResponse) => void) => void;
   'room:leave': () => void;
   'room:add_bot': (cb: (res: { success: boolean }) => void) => void;
+  'room:host_manage_player': (
+    payload: { targetPlayerId: string; action: 'set_chips' | 'kick'; chips?: number },
+    cb: (res: { success: boolean; error?: string }) => void
+  ) => void;
   'player:away': (payload: { away: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'room:join_request_decision': (payload: { requestId: string; approve: boolean; buyIn?: number }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:pause': (payload: { paused: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:start': (cb: (res: { success: boolean; error?: string }) => void) => void;
+  'game:reveal_cards': (payload: { slot: 1 | 2 }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:action': (payload: { action: ActionType; amount?: number }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'chat:send': (payload: { message: string }) => void;
   'game:next_hand': () => void;
@@ -145,6 +152,7 @@ export interface ServerToClientEvents {
   'room:join_request': (req: JoinRequest) => void;
   'room:join_approved': (payload: { room: Room; playerId: string; gameState?: GameState }) => void;
   'room:join_denied': (payload: { requestId: string; error?: string }) => void;
+  'room:player_kicked': (payload: { roomId: string; reason?: string }) => void;
   'game:state': (state: GameState) => void;
   'game:action_made': (entry: ActionLogEntry & { state: GameState }) => void;
   'game:hand_result': (result: HandResultPayload) => void;

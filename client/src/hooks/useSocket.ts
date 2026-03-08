@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useGameStore } from '../store/gameStore';
 import { ClientToServerEvents, ServerToClientEvents, RoomSettings, ActionType, GameState } from '../types/poker';
-import { playBetSound, playFlopSound, playHoleCardsSound, playRiverSound, playTurnSound } from '../lib/soundEffects';
+import { playBetSound, playCheckSound, playFlopSound, playHoleCardsSound, playRiverSound, playTurnSound, playWinnerSound } from '../lib/soundEffects';
 import { saveRoomIdentity } from '../lib/playerSession';
 
 let socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
@@ -27,6 +27,7 @@ export function useSocket() {
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevStateRef = useRef<GameState | null>(null);
+  const lastWinnerSoundKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const s = getSocket();
@@ -52,6 +53,12 @@ export function useSocket() {
         setJoinPending({ ...pending, status: 'denied', error: error || 'Host denied your request' });
       }
     });
+    s.on('room:player_kicked', ({ reason }) => {
+      alert(reason || 'You were removed from this room by host.');
+      clearJoinRequests();
+      setJoinPending(null);
+      useGameStore.getState().reset();
+    });
 
     s.on('game:state', (state) => {
       const prev = prevStateRef.current;
@@ -70,12 +77,6 @@ export function useSocket() {
         playHoleCardsSound();
       }
 
-      if (prev && prev.stage !== state.stage) {
-        if (state.stage === 'flop') playFlopSound();
-        if (state.stage === 'turn') playTurnSound();
-        if (state.stage === 'river') playRiverSound();
-      }
-
       const prevLastAction = prev?.actionLog?.[prev.actionLog.length - 1];
       const currLastAction = state.actionLog?.[state.actionLog.length - 1];
       const isNewAction = !!currLastAction && currLastAction.timestamp !== prevLastAction?.timestamp;
@@ -86,8 +87,21 @@ export function useSocket() {
         currLastAction.action === 'raise' ||
         currLastAction.action === 'allin'
       );
-      if (isNewAction && isBetLikeAction) {
+      const isCheckAction = currLastAction?.action === 'check';
+      const playedBetSound = !!(isNewAction && isBetLikeAction);
+      const playedCheckSound = !!(isNewAction && isCheckAction);
+      if (playedBetSound) {
         playBetSound();
+      } else if (playedCheckSound) {
+        playCheckSound();
+      }
+
+      // If this same state update already played a bet/chip sound,
+      // skip stage-reveal tap to avoid double-SFX overlap.
+      if (!playedBetSound && !playedCheckSound && prev && prev.stage !== state.stage) {
+        if (state.stage === 'flop') playFlopSound();
+        if (state.stage === 'turn') playTurnSound();
+        if (state.stage === 'river') playRiverSound();
       }
 
       setGameState(state);
@@ -100,6 +114,14 @@ export function useSocket() {
     s.on('game:hand_result', (result) => {
       setHandResult(result);
       setShowHandResult(true);
+      const myId = useGameStore.getState().myPlayerId;
+      const amIWinner = !!myId && result.winners.some((w) => w.playerId === myId);
+      const roomId = useGameStore.getState().room?.id ?? '';
+      const handKey = `${roomId}:${result.handNumber}`;
+      if (amIWinner && lastWinnerSoundKeyRef.current !== handKey) {
+        playWinnerSound();
+        lastWinnerSoundKeyRef.current = handKey;
+      }
       stopTimer();
     });
 
@@ -137,6 +159,7 @@ export function useSocket() {
       s.off('room:join_request');
       s.off('room:join_approved');
       s.off('room:join_denied');
+      s.off('room:player_kicked');
       s.off('game:state');
       s.off('game:hand_result');
       s.off('chat:message');
@@ -145,6 +168,7 @@ export function useSocket() {
       s.off('player:connected');
       stopTimer();
       prevStateRef.current = null;
+      lastWinnerSoundKeyRef.current = null;
     };
   }, []);
 
@@ -239,6 +263,24 @@ export function useSocket() {
     });
   }
 
+  function hostManagePlayer(targetPlayerId: string, action: 'set_chips' | 'kick', chips?: number) {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        resolve({ success: false, error: 'Server timeout. Please redeploy backend or retry.' });
+      }, 8000);
+
+      getSocket().emit('room:host_manage_player', { targetPlayerId, action, chips }, (res) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(res);
+      });
+    });
+  }
+
   function setPause(paused: boolean) {
     return new Promise<{ success: boolean; error?: string }>((resolve) => {
       getSocket().emit('game:pause', { paused }, (res) => resolve(res));
@@ -267,6 +309,12 @@ export function useSocket() {
     });
   }
 
+  function revealCards(slot: 1 | 2) {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      getSocket().emit('game:reveal_cards', { slot }, (res) => resolve(res));
+    });
+  }
+
   function sendChat(message: string) {
     getSocket().emit('chat:send', { message });
   }
@@ -280,6 +328,7 @@ export function useSocket() {
     clearJoinRequests();
     setJoinPending(null);
     prevStateRef.current = null;
+    lastWinnerSoundKeyRef.current = null;
     useGameStore.getState().reset();
   }
 
@@ -290,9 +339,11 @@ export function useSocket() {
     addBot,
     setAway,
     decideJoinRequest,
+    hostManagePlayer,
     setPause,
     startGame,
     performAction,
+    revealCards,
     sendChat,
     nextHand,
     leaveRoom,

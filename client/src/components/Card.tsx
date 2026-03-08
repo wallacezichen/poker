@@ -5,7 +5,7 @@ import clsx from 'clsx';
 interface CardProps {
   card?: CardType;
   faceDown?: boolean;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
   index?: number; // for staggered animation
 }
@@ -14,24 +14,28 @@ const sizeClasses = {
   sm: 'w-9 h-[52px]',
   md: 'w-[52px] h-[76px]',
   lg: 'w-[64px] h-[92px]',
+  xl: 'w-[76px] h-[108px]',
 };
 
 const rankSize = {
   sm: 'text-3xl',
   md: 'text-4xl',
   lg: 'text-5xl',
+  xl: 'text-5xl',
 };
 
 const rankBox = {
   sm: 'w-6',
   md: 'w-7',
   lg: 'w-8',
+  xl: 'w-9',
 };
 
 const suitSize = {
   sm: 'text-xl',
   md: 'text-2xl',
   lg: 'text-3xl',
+  xl: 'text-4xl',
 };
 
 export default function Card({ card, faceDown = false, size = 'md', className = '', index = 0 }: CardProps) {

@@ -50,6 +50,17 @@ function getMinRaiseTo(state: FullGameState): number {
   return state.currentBet + lastFullRaiseSize;
 }
 
+function bitCount(mask: number): number {
+  return (mask & 1 ? 1 : 0) + (mask & 2 ? 1 : 0);
+}
+
+function publicHoleCardsForMask(holeCards: Card[], mask: number): Card[] {
+  if (mask === 3) return holeCards.slice(0, 2);
+  if (mask === 1) return holeCards[0] ? [holeCards[0]] : [];
+  if (mask === 2) return holeCards[1] ? [holeCards[1]] : [];
+  return [];
+}
+
 // Initialize a brand new hand
 export function initHand(
   players: Array<{ id: string; name: string; color: string; chips: number; isBot: boolean; isConnected: boolean }>,
@@ -74,6 +85,8 @@ export function initHand(
     isBot: p.isBot,
     isConnected: p.isConnected,
     seatIndex: i,
+    revealedMask: 0,
+    revealedCount: 0,
   }));
 
   const n = activePlayers.length;
@@ -335,6 +348,12 @@ function advanceStage(state: FullGameState): void {
 
 function resolveShowdown(state: FullGameState): void {
   const contenders = state.players.filter(p => !p.folded);
+  const hasAllInContender = contenders.some(p => p.allIn);
+
+  for (const p of contenders) {
+    p.revealedMask = hasAllInContender ? 3 : 0;
+    p.revealedCount = hasAllInContender ? 2 : 0;
+  }
 
   // Evaluate hands
   for (const p of contenders) {
@@ -357,6 +376,8 @@ function resolveShowdown(state: FullGameState): void {
   const winnerInfos: WinnerInfo[] = winners.map((w, i) => {
     const earned = share + (i === 0 ? remainder : 0);
     w.chips += earned;
+    w.revealedMask = 3;
+    w.revealedCount = 2;
     return {
       playerId: w.id,
       name: w.name,
@@ -374,6 +395,8 @@ function resolveShowdown(state: FullGameState): void {
 function endHandByFolds(state: FullGameState, remaining: PlayerState[]): FullGameState {
   const winner = remaining[0];
   winner.chips += state.pot;
+  winner.revealedMask = 3;
+  winner.revealedCount = 2;
   state.winners = [{
     playerId: winner.id,
     name: winner.name,
@@ -393,7 +416,8 @@ export function sanitizeStateFor(state: FullGameState, viewerId: string): GameSt
     ...publicState,
     players: state.players.map(p => ({
       ...p,
-      holeCards: p.id === viewerId || state.stage === 'showdown' ? p.holeCards : [],
+      holeCards: p.id === viewerId ? p.holeCards : publicHoleCardsForMask(p.holeCards, p.revealedMask ?? 0),
+      revealedCount: bitCount(p.revealedMask ?? 0),
     })),
   };
 }

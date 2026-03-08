@@ -14,7 +14,6 @@ interface PlayerSeatProps {
   isWinner?: boolean;
   communityCards?: CardType[];
   winsCount?: number;
-  timerSeconds?: number;
   statusText?: string;
   showCheckBubble?: boolean;
 }
@@ -25,10 +24,22 @@ function formatChips(n: number): string {
 
 export default function PlayerSeat({
   player, isDealer, isSmallBlind, isBigBlind,
-  isActive, isMe, isShowdown, isWinner = false, communityCards = [], winsCount = 0, timerSeconds = 30, statusText, showCheckBubble = false,
+  isActive, isMe, isShowdown, isWinner = false, communityCards = [], winsCount = 0, statusText, showCheckBubble = false,
 }: PlayerSeatProps) {
-  const showCards = isMe || (isShowdown && !player.folded);
-  const timerPct = (timerSeconds / 30) * 100;
+  const showCards = isMe || (player.holeCards?.length ?? 0) > 0;
+  const mask = player.revealedMask ?? 0;
+  let displayCards: Array<CardType | undefined>;
+  if (isMe) {
+    displayCards = [player.holeCards?.[0], player.holeCards?.[1]];
+  } else if (mask === 1) {
+    displayCards = [player.holeCards?.[0], undefined];
+  } else if (mask === 2) {
+    displayCards = [undefined, player.holeCards?.[0]];
+  } else if (mask === 3) {
+    displayCards = [player.holeCards?.[0], player.holeCards?.[1]];
+  } else {
+    displayCards = [undefined, undefined];
+  }
   const liveBest = isMe ? evaluateBestHandName([...player.holeCards, ...communityCards]) : '';
   const handLabel = player.handResult?.name?.toUpperCase() || player.handResult?.nameZh || liveBest;
 
@@ -36,11 +47,11 @@ export default function PlayerSeat({
     <div className={clsx('relative select-none', player.folded && 'opacity-45')}>
       <div className="flex items-end gap-2">
         <div className="flex -space-x-2 mb-1">
-          {(player.holeCards.length > 0 ? player.holeCards : [undefined, undefined]).slice(0, 2).map((card, i) => (
+          {displayCards.map((card, i) => (
             <Card
               key={i}
               card={card}
-              faceDown={!showCards}
+              faceDown={!showCards || !card}
               size="lg"
               index={i}
               className={clsx('rotate-[-4deg]', i === 1 && 'rotate-[5deg]')}
@@ -50,9 +61,9 @@ export default function PlayerSeat({
 
         <div
           className={clsx(
-            'relative min-w-[190px] rounded-xl border px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.35)]',
-            'bg-black/38 border-white/35',
-            isActive && !player.folded && 'ring-2 ring-emerald-300',
+            'relative min-w-[190px] rounded-xl border px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.35)] transition-all',
+            'bg-slate-600 border-white/35',
+            isActive && !player.folded && 'ring-4 ring-yellow-300 border-yellow-200 shadow-[0_0_30px_rgba(250,204,21,0.72)]',
             isWinner && 'ring-2 ring-yellow-300 shadow-[0_0_28px_rgba(250,204,21,0.62)]'
           )}
         >
@@ -66,12 +77,12 @@ export default function PlayerSeat({
           {isWinner && (
             <>
               <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-br from-yellow-300/18 via-amber-200/8 to-transparent" />
-              <div className="pointer-events-none absolute -inset-0.5 rounded-[14px] border border-yellow-200/45 animate-pulse" />
+              <div className="pointer-events-none absolute -inset-0.5 rounded-[14px] border border-yellow-200/45" />
             </>
           )}
 
-          <div className="text-[2rem] font-bold leading-none max-w-[130px] truncate text-slate-300">{player.name}</div>
-          <div className="text-3xl font-bold leading-none mt-1 text-white">{formatChips(player.chips)}</div>
+          <div className="text-[1.6rem] font-bold leading-tight max-w-[130px] truncate text-white">{player.name}</div>
+          <div className="text-[1.3rem] font-bold leading-tight mt-0.5 text-white">{formatChips(player.chips)}</div>
 
           <div className={clsx(
             'absolute top-1 bg-emerald-500 text-white rounded-full px-2.5 py-0.5 text-[0.95rem] font-bold flex items-center gap-1',
@@ -99,11 +110,6 @@ export default function PlayerSeat({
             </div>
           )}
 
-          <div className="mt-2 h-1.5 rounded-full bg-slate-200 overflow-hidden">
-            <div className="h-full bg-violet-500 w-1/3" />
-            <div className="h-full bg-lime-400 w-1/2 -mt-1.5 ml-[35%]" />
-          </div>
-
           {player.bet > 0 && (
             <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-lime-300 text-black rounded-full w-12 h-12 text-xl font-bold flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.35)]">
               {formatChips(player.bet)}
@@ -130,17 +136,6 @@ export default function PlayerSeat({
         </div>
       )}
 
-      {isActive && !player.folded && !player.allIn && (
-        <div className="mt-1 h-1 rounded bg-white/15 overflow-hidden">
-          <div
-            className="h-full transition-all duration-1000 ease-linear"
-            style={{
-              width: `${timerPct}%`,
-              background: timerSeconds > 20 ? '#6ee7b7' : timerSeconds > 10 ? '#facc15' : '#fb7185',
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 }

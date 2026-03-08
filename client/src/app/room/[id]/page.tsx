@@ -14,7 +14,7 @@ export default function RoomPage() {
 
   const {
     startGame, addBot, performAction, sendChat, nextHand,
-    leaveRoom, joinRoom, resumeRoom, setAway, setPause, decideJoinRequest,
+    leaveRoom, joinRoom, resumeRoom, setAway, setPause, decideJoinRequest, hostManagePlayer, revealCards,
   } = useSocket();
   const { room, gameState, myPlayerId, isConnected, joinPending, setJoinPending } = useGameStore();
 
@@ -95,6 +95,16 @@ export default function RoomPage() {
   async function handleJoinRequestDecision(requestId: string, approve: boolean, buyIn?: number) {
     const res = await decideJoinRequest(requestId, approve, buyIn);
     if (!res.success) alert(res.error || '审批失败');
+  }
+
+  async function handleHostManagePlayer(targetPlayerId: string, action: 'set_chips' | 'kick', chips?: number) {
+    const res = await hostManagePlayer(targetPlayerId, action, chips);
+    return res;
+  }
+
+  async function handleRevealCards(count: 1 | 2) {
+    const res = await revealCards(count);
+    if (!res.success) alert(res.error || 'Reveal failed');
   }
 
   // Loading state
@@ -230,8 +240,10 @@ export default function RoomPage() {
       onSendChat={sendChat}
       onSetAway={handleSetAway}
       onJoinRequestDecision={handleJoinRequestDecision}
+      onHostManagePlayer={handleHostManagePlayer}
       onSetPause={handleSetPause}
       onNextHand={nextHand}
+      onRevealCards={handleRevealCards}
       onLeave={handleLeave}
     />
   );

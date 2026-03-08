@@ -89,6 +89,18 @@ export async function updatePlayerConnection(
     .eq('room_id', roomId);
 }
 
+export async function removePlayer(
+  roomId: string,
+  playerId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('players')
+    .delete()
+    .eq('id', playerId)
+    .eq('room_id', roomId);
+  if (error) throw new Error(`Failed to remove player: ${error.message}`);
+}
+
 export async function getPlayers(roomId: string): Promise<RoomPlayer[]> {
   const { data, error } = await supabase
     .from('players')

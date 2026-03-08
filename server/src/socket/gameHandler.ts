@@ -5,7 +5,7 @@ import { initHand, applyAction, sanitizeStateFor, FullGameState } from '../game/
 import { decideBotAction, getBotThinkTime } from '../game/botAI';
 import {
   createRoom, getRoom, updateRoomStatus, upsertPlayer,
-  updatePlayerChips, updatePlayerConnection, getPlayers,
+  updatePlayerChips, updatePlayerConnection, getPlayers, removePlayer,
   saveGameState, loadGameState, saveHandHistory,
   saveChat, getChatHistory,
 } from '../db/supabase';
@@ -302,6 +302,111 @@ export function registerGameHandlers(
   });
 
   // ============================================================
+  // HOST MANAGE PLAYER (set chips / kick)
+  // ============================================================
+  socket.on('room:host_manage_player', async ({ targetPlayerId, action, chips }, cb) => {
+    const session = socketToPlayer.get(socket.id);
+    if (!session) return cb({ success: false, error: 'Not in a room' });
+    const { roomId, playerId } = session;
+
+    const roomData = await getRoom(roomId);
+    if (!roomData) return cb({ success: false, error: 'Room not found' });
+    if (roomData.host_id !== playerId) return cb({ success: false, error: 'Only host can manage players' });
+    if (targetPlayerId === playerId) return cb({ success: false, error: 'Cannot manage host seat' });
+
+    const players = await getPlayers(roomId);
+    const target = players.find(p => p.id === targetPlayerId);
+    if (!target) return cb({ success: false, error: 'Player not found' });
+
+    if (action === 'set_chips') {
+      const nextChips = Math.max(0, Math.floor(chips ?? target.chips));
+      console.log(`[Socket][host_manage] set_chips room=${roomId} target=${targetPlayerId} chips=${nextChips}`);
+      await updatePlayerChips(roomId, targetPlayerId, nextChips);
+
+      const state = activeGames.get(roomId);
+      if (state) {
+        const inHand = state.players.find(p => p.id === targetPlayerId);
+        if (inHand) {
+          inHand.chips = nextChips;
+          inHand.allIn = nextChips === 0;
+          if (nextChips === 0) {
+            inHand.folded = true;
+            state.playersToAct = state.playersToAct.filter(id => id !== targetPlayerId);
+          }
+          await saveGameState(state);
+          broadcastGameState(io, roomId, state);
+        }
+      }
+
+      const room = await getFullRoom(roomId);
+      if (room) io.to(roomId).emit('room:updated', room);
+      return cb({ success: true });
+    }
+
+    // action === 'kick'
+    const targetSocketId = roomSockets.get(roomId)?.get(targetPlayerId);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('room:player_kicked', { roomId, reason: 'Removed by host' });
+      const targetSocket = io.sockets.sockets.get(targetSocketId);
+      if (targetSocket) targetSocket.leave(roomId);
+      socketToPlayer.delete(targetSocketId);
+    }
+
+    roomSockets.get(roomId)?.delete(targetPlayerId);
+    setPlayerAway(roomId, targetPlayerId, true);
+
+    const state = activeGames.get(roomId);
+    if (state) {
+      const p = state.players.find(x => x.id === targetPlayerId);
+      if (p) {
+        const wasCurrentActor =
+          state.stage !== 'showdown' &&
+          state.players[state.currentPlayerIndex]?.id === targetPlayerId &&
+          !p.folded &&
+          !p.allIn;
+
+        if (wasCurrentActor) {
+          clearActionTimer(roomId);
+          const { state: newState } = applyAction(state, targetPlayerId, 'fold');
+          activeGames.set(roomId, newState);
+          saveGameState(newState).catch(console.error);
+          broadcastGameState(io, roomId, newState);
+
+          if (newState.stage === 'showdown') {
+            saveHandHistory(newState).catch(console.error);
+            io.to(roomId).emit('game:hand_result', {
+              winners: newState.winners!,
+              players: publicPlayersForShowdown(newState),
+              pot: newState.pot,
+              handNumber: newState.handNumber,
+            });
+          } else {
+            scheduleCurrentPlayerAction(io, roomId, newState);
+          }
+        } else {
+          p.folded = true;
+          p.allIn = true;
+          p.isConnected = false;
+          state.actionLog.push({
+            playerId: p.id,
+            playerName: p.name,
+            action: 'fold',
+            timestamp: Date.now(),
+          });
+          state.playersToAct = state.playersToAct.filter(id => id !== targetPlayerId);
+          saveGameState(state).catch(console.error);
+          broadcastGameState(io, roomId, state);
+        }
+      }
+    }
+
+    await removePlayer(roomId, targetPlayerId);
+    const room = await getFullRoom(roomId);
+    if (room) io.to(roomId).emit('room:updated', room);
+    cb({ success: true });
+  });
+
+  // ============================================================
   // JOIN REQUEST DECISION (host only)
   // ============================================================
   socket.on('room:join_request_decision', async ({ requestId, approve, buyIn }, cb) => {
@@ -488,6 +593,37 @@ export function registerGameHandlers(
   });
 
   // ============================================================
+  // REVEAL HOLE CARDS (showdown only)
+  // ============================================================
+  socket.on('game:reveal_cards', async ({ slot }, cb) => {
+    const session = socketToPlayer.get(socket.id);
+    if (!session) return cb({ success: false, error: 'Not in a room' });
+
+    const { roomId, playerId } = session;
+    const state = activeGames.get(roomId);
+    if (!state) return cb({ success: false, error: 'No active game' });
+    if (state.stage !== 'showdown') return cb({ success: false, error: 'Only available at showdown' });
+    if (slot !== 1 && slot !== 2) return cb({ success: false, error: 'Invalid reveal slot' });
+
+    const player = state.players.find((p) => p.id === playerId);
+    if (!player) return cb({ success: false, error: 'Player not found' });
+
+    const bit = slot === 1 ? 1 : 2;
+    const nextMask = (player.revealedMask ?? 0) | bit;
+    player.revealedMask = nextMask;
+    player.revealedCount = (nextMask & 1 ? 1 : 0) + (nextMask & 2 ? 1 : 0);
+    await saveGameState(state);
+    broadcastGameState(io, roomId, state);
+    io.to(roomId).emit('game:hand_result', {
+      winners: state.winners ?? [],
+      players: publicPlayersForShowdown(state),
+      pot: state.pot,
+      handNumber: state.handNumber,
+    });
+    cb({ success: true });
+  });
+
+  // ============================================================
   // PLAYER ACTION
   // ============================================================
   socket.on('game:action', async ({ action, amount }, cb) => {
@@ -527,7 +663,7 @@ export function registerGameHandlers(
       // Emit hand result
       io.to(roomId).emit('game:hand_result', {
         winners: newState.winners!,
-        players: newState.players,
+        players: publicPlayersForShowdown(newState),
         pot: newState.pot,
         handNumber: newState.handNumber,
       });
@@ -634,6 +770,21 @@ function broadcastGameState(
   }
 }
 
+function publicPlayersForShowdown(state: FullGameState) {
+  return state.players.map((p) => ({
+    ...p,
+    holeCards:
+      (p.revealedMask ?? 0) === 3
+        ? p.holeCards.slice(0, 2)
+        : (p.revealedMask ?? 0) === 1
+          ? (p.holeCards[0] ? [p.holeCards[0]] : [])
+          : (p.revealedMask ?? 0) === 2
+            ? (p.holeCards[1] ? [p.holeCards[1]] : [])
+            : [],
+    revealedCount: ((p.revealedMask ?? 0) & 1 ? 1 : 0) + ((p.revealedMask ?? 0) & 2 ? 1 : 0),
+  }));
+}
+
 function scheduleCurrentPlayerAction(
   io: Server,
   roomId: string,
@@ -668,7 +819,7 @@ function scheduleCurrentPlayerAction(
         saveHandHistory(newState).catch(console.error);
         io.to(roomId).emit('game:hand_result', {
           winners: newState.winners!,
-          players: newState.players,
+          players: publicPlayersForShowdown(newState),
           pot: newState.pot,
           handNumber: newState.handNumber,
         });

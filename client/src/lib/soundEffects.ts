@@ -1,66 +1,71 @@
 'use client';
 
-let audioCtx: AudioContext | null = null;
+type SfxKey = 'deal' | 'bet' | 'reveal' | 'winner';
 
-function getAudioContext(): AudioContext | null {
-  if (typeof window === 'undefined') return null;
-  if (!audioCtx) {
-    const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-    if (!Ctx) return null;
-    audioCtx = new Ctx();
+const SFX: Record<SfxKey, { src: string; volume: number }> = {
+  deal: { src: '/sfx/card-flip.mp3', volume: 0.4 },
+  bet: { src: '/sfx/chip.mp3', volume: 0.45 },
+  reveal: { src: '/sfx/tap.mp3', volume: 0.38 },
+  winner: { src: '/sfx/winner.mp3', volume: 0.5 },
+};
+
+let soundMuted = false;
+let masterVolume = 0.8; // 0..1
+
+export function setSoundSettings(next: { muted?: boolean; volume?: number }): void {
+  if (typeof next.muted === 'boolean') soundMuted = next.muted;
+  if (typeof next.volume === 'number') {
+    masterVolume = Math.max(0, Math.min(1, next.volume));
   }
-  return audioCtx;
 }
 
-function playTone(freq: number, durationMs: number, type: OscillatorType, gain = 0.04, delayMs = 0): void {
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  if (ctx.state === 'suspended') {
-    ctx.resume().catch(() => {});
+export function getSoundSettings(): { muted: boolean; volume: number } {
+  return { muted: soundMuted, volume: masterVolume };
+}
+
+function playSfx(key: SfxKey): void {
+  if (typeof window === 'undefined') return;
+  if (soundMuted) return;
+  const cfg = SFX[key];
+  try {
+    const audio = new Audio(cfg.src);
+    audio.volume = Math.max(0, Math.min(1, cfg.volume * masterVolume));
+    audio.preload = 'auto';
+    const p = audio.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => {
+        // ignore blocked autoplay / permission errors
+      });
+    }
+  } catch {
+    // ignore play errors (autoplay policy, etc.)
   }
-
-  const osc = ctx.createOscillator();
-  const g = ctx.createGain();
-  const start = ctx.currentTime + delayMs / 1000;
-  const end = start + durationMs / 1000;
-
-  osc.type = type;
-  osc.frequency.setValueAtTime(freq, start);
-
-  g.gain.setValueAtTime(0.0001, start);
-  g.gain.exponentialRampToValueAtTime(gain, start + 0.01);
-  g.gain.exponentialRampToValueAtTime(0.0001, end);
-
-  osc.connect(g);
-  g.connect(ctx.destination);
-  osc.start(start);
-  osc.stop(end);
 }
 
 export function playHoleCardsSound(): void {
-  playTone(620, 55, 'triangle', 0.05, 0);
-  playTone(740, 60, 'triangle', 0.05, 70);
+  playSfx('deal');
 }
 
 export function playFlopSound(): void {
-  playTone(420, 60, 'sine', 0.045, 0);
-  playTone(520, 60, 'sine', 0.045, 70);
-  playTone(640, 70, 'sine', 0.05, 140);
+  playSfx('reveal');
 }
 
 export function playTurnSound(): void {
-  playTone(520, 70, 'triangle', 0.05, 0);
-  playTone(700, 80, 'triangle', 0.05, 90);
+  playSfx('reveal');
 }
 
 export function playRiverSound(): void {
-  playTone(360, 70, 'sine', 0.05, 0);
-  playTone(480, 70, 'sine', 0.05, 90);
-  playTone(720, 120, 'triangle', 0.055, 180);
+  playSfx('reveal');
 }
 
 export function playBetSound(): void {
-  // Softer coin-like tick (less harsh than square wave)
-  playTone(760, 26, 'triangle', 0.026, 0);
-  playTone(1080, 34, 'sine', 0.02, 24);
+  playSfx('bet');
+}
+
+export function playCheckSound(): void {
+  playSfx('reveal');
+}
+
+export function playWinnerSound(): void {
+  playSfx('winner');
 }
