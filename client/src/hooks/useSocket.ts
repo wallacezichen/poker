@@ -2,7 +2,7 @@
 import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useGameStore } from '../store/gameStore';
-import { ClientToServerEvents, ServerToClientEvents, RoomSettings, ActionType, GameState } from '../types/poker';
+import { ClientToServerEvents, ServerToClientEvents, RoomSettings, ActionType, GameState, HandResultPayload } from '../types/poker';
 import { playBetSound, playCheckSound, playFlopSound, playHoleCardsSound, playRiverSound, playTurnSound, playWinnerSound } from '../lib/soundEffects';
 import { saveRoomIdentity } from '../lib/playerSession';
 
@@ -22,13 +22,15 @@ export function useSocket() {
   const {
     setConnected, setRoom, setMyPlayerId,
     setGameState, setHandResult, addChatMessage,
-    setShowHandResult, setGamePaused, addJoinRequest, removeJoinRequest, clearJoinRequests, setJoinPending, setRebuyPrompt, addRebuyBadgePlayer,
+    setShowHandResult, setGamePaused, addJoinRequest, removeJoinRequest, clearJoinRequests, setJoinPending, setRebuyPrompt, addRebuyBadgePlayer, setRebuyCountMap,
   } = useGameStore();
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const streetRevealDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const delayedStateRef = useRef<GameState | null>(null);
   const prevStateRef = useRef<GameState | null>(null);
   const lastWinnerSoundKeyRef = useRef<string | null>(null);
+  const pendingHandResultRef = useRef<HandResultPayload | null>(null);
 
   useEffect(() => {
     const s = getSocket();
@@ -89,8 +91,9 @@ export function useSocket() {
         currLastAction.action === 'allin'
       );
       const isCheckAction = currLastAction?.action === 'check';
-      const playedBetSound = !!(isNewAction && isBetLikeAction);
-      const playedCheckSound = !!(isNewAction && isCheckAction);
+      const isMyOwnAction = !!(currLastAction && myId && currLastAction.playerId === myId);
+      const playedBetSound = !!(isNewAction && isBetLikeAction && !isMyOwnAction);
+      const playedCheckSound = !!(isNewAction && isCheckAction && !isMyOwnAction);
       if (playedBetSound) {
         playBetSound();
       } else if (playedCheckSound) {
@@ -114,28 +117,93 @@ export function useSocket() {
 
     s.on('game:state', (state) => {
       const prev = prevStateRef.current;
+      const prevLastAction = prev?.actionLog?.[prev.actionLog.length - 1];
+      const currLastAction = state.actionLog?.[state.actionLog.length - 1];
+      const isNewAction = !!currLastAction && currLastAction.timestamp !== prevLastAction?.timestamp;
+      const isDecisionAction = (a?: string) => a === 'check' || a === 'call' || a === 'raise' || a === 'allin';
       const isStreetReveal =
         !!prev &&
         prev.stage !== state.stage &&
-        (state.stage === 'flop' || state.stage === 'turn' || state.stage === 'river');
+        (state.stage === 'flop' || state.stage === 'turn' || state.stage === 'river' || state.stage === 'showdown');
+      const isRiverToShowdownAfterAction =
+        !!prev &&
+        prev.stage === 'river' &&
+        state.stage === 'showdown' &&
+        isDecisionAction(prevLastAction?.action);
+      const shouldClientSuspense =
+        isStreetReveal &&
+        (
+          (isNewAction && !!currLastAction && isDecisionAction(currLastAction.action)) ||
+          isRiverToShowdownAfterAction
+        );
 
-      if (isStreetReveal) {
+      if (shouldClientSuspense && prev) {
         if (streetRevealDelayRef.current) clearTimeout(streetRevealDelayRef.current);
+        delayedStateRef.current = state;
+        const prevBetById = new Map(prev.players.map((p) => [p.id, p.bet]));
+        const suspensePlayers = state.players.map((p) => ({
+          ...p,
+          bet: Number(prevBetById.get(p.id) || 0),
+        }));
+        if (currLastAction && (currLastAction.action === 'call' || currLastAction.action === 'raise' || currLastAction.action === 'allin')) {
+          const idx = suspensePlayers.findIndex((p) => p.id === currLastAction.playerId);
+          if (idx >= 0 && Number(currLastAction.amount || 0) > 0) {
+            suspensePlayers[idx] = {
+              ...suspensePlayers[idx],
+              bet: Number(currLastAction.amount || 0),
+            };
+          }
+        }
+
+        const suspenseState: GameState = {
+          ...state,
+          stage: prev.stage,
+          communityCards: prev.communityCards,
+          currentPlayerIndex: -1,
+          players: suspensePlayers,
+          winners: undefined,
+        };
+        for (const p of suspenseState.players) {
+          p.handResult = undefined;
+          p.runItTwiceHandNamesZh = undefined;
+        }
+        applyIncomingState(suspenseState);
         streetRevealDelayRef.current = setTimeout(() => {
-          applyIncomingState(state);
+          applyIncomingState(delayedStateRef.current || state);
+          delayedStateRef.current = null;
+          if (pendingHandResultRef.current) {
+            const result = pendingHandResultRef.current;
+            pendingHandResultRef.current = null;
+            setHandResult(result);
+            setShowHandResult(true);
+            const myId = useGameStore.getState().myPlayerId;
+            const amIWinner = !!myId && result.winners.some((w) => w.playerId === myId);
+            const roomId = useGameStore.getState().room?.id ?? '';
+            const handKey = `${roomId}:${result.handNumber}`;
+            if (amIWinner && lastWinnerSoundKeyRef.current !== handKey) {
+              playWinnerSound();
+              lastWinnerSoundKeyRef.current = handKey;
+            }
+            stopTimer();
+          }
           streetRevealDelayRef.current = null;
         }, 1500);
         return;
       }
 
       if (streetRevealDelayRef.current) {
-        clearTimeout(streetRevealDelayRef.current);
-        streetRevealDelayRef.current = null;
+        // Keep suspense timer running; only refresh the pending final state.
+        delayedStateRef.current = state;
+        return;
       }
       applyIncomingState(state);
     });
 
     s.on('game:hand_result', (result) => {
+      if (streetRevealDelayRef.current) {
+        pendingHandResultRef.current = result;
+        return;
+      }
       setHandResult(result);
       setShowHandResult(true);
       const myId = useGameStore.getState().myPlayerId;
@@ -153,6 +221,7 @@ export function useSocket() {
     s.on('game:paused', (paused) => setGamePaused(paused));
     s.on('game:rebuy_prompt', (payload) => setRebuyPrompt(payload));
     s.on('game:player_rebuy', ({ playerId }) => addRebuyBadgePlayer(playerId));
+    s.on('game:rebuy_counts', ({ counts }) => setRebuyCountMap(counts || {}));
 
     s.on('player:disconnected', (playerId) => {
       const room = useGameStore.getState().room;
@@ -192,6 +261,7 @@ export function useSocket() {
       s.off('game:paused');
       s.off('game:rebuy_prompt');
       s.off('game:player_rebuy');
+      s.off('game:rebuy_counts');
       s.off('player:disconnected');
       s.off('player:connected');
       stopTimer();
@@ -199,6 +269,8 @@ export function useSocket() {
         clearTimeout(streetRevealDelayRef.current);
         streetRevealDelayRef.current = null;
       }
+      delayedStateRef.current = null;
+      pendingHandResultRef.current = null;
       prevStateRef.current = null;
       lastWinnerSoundKeyRef.current = null;
     };
@@ -353,6 +425,12 @@ export function useSocket() {
     });
   }
 
+  function revealDeadBoard() {
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      getSocket().emit('game:reveal_dead_board', (res) => resolve(res));
+    });
+  }
+
   function voteRunItTwice(agree: boolean) {
     return new Promise<{ success: boolean; error?: string }>((resolve) => {
       getSocket().emit('game:run_it_twice_vote', { agree }, (res) => resolve(res));
@@ -395,6 +473,7 @@ export function useSocket() {
     startGame,
     performAction,
     revealCards,
+    revealDeadBoard,
     voteRunItTwice,
     respondRebuy,
     sendChat,

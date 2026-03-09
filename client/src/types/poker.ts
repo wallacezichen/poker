@@ -44,6 +44,8 @@ export interface HandResult {
 export interface GameState {
   roomId: string;
   gameType?: GameType;
+  deadBoardCards?: Card[];
+  deadBoardRevealed?: boolean;
   bombPot?: {
     enabled: boolean;
     active: boolean;
@@ -180,6 +182,7 @@ export interface ClientToServerEvents {
   'game:pause': (payload: { paused: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:start': (cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:reveal_cards': (payload: { slot: 1 | 2 }, cb: (res: { success: boolean; error?: string }) => void) => void;
+  'game:reveal_dead_board': (cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:run_it_twice_vote': (payload: { agree: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:rebuy_or_leave': (
     payload: { rebuy: boolean; buyIn?: number },
@@ -200,6 +203,7 @@ export interface ServerToClientEvents {
   'game:action_made': (entry: ActionLogEntry & { state: GameState }) => void;
   'game:hand_result': (result: HandResultPayload) => void;
   'game:player_rebuy': (payload: { playerId: string }) => void;
+  'game:rebuy_counts': (payload: { counts: Record<string, number> }) => void;
   'chat:message': (msg: ChatMessage) => void;
   'game:paused': (paused: boolean) => void;
   'game:rebuy_prompt': (payload: { minBuyIn: number; defaultBuyIn: number }) => void;

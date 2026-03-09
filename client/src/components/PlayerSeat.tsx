@@ -236,7 +236,8 @@ function evaluateBestHandName(cards: CardType[], gameType: GameType): string {
     const r = evaluate5Rank(combo, gameType);
     if (r > bestRank) bestRank = r;
   }
-  return HAND_NAMES[bestRank] || '';
+  const names = gameType === 'short_deck' ? HAND_NAMES_SHORT_DECK : HAND_NAMES_REGULAR;
+  return names[bestRank] || '';
 }
 
 const RANK_VALUES: Record<Rank, number> = {
@@ -254,6 +255,18 @@ const HAND_NAMES: Record<number, string> = {
   2: 'TWO PAIR',
   1: 'ONE PAIR',
   0: 'HIGH CARD',
+};
+
+const HAND_NAMES_REGULAR: Record<number, string> = {
+  ...HAND_NAMES,
+  6: 'FULL HOUSE',
+  5: 'FLUSH',
+};
+
+const HAND_NAMES_SHORT_DECK: Record<number, string> = {
+  ...HAND_NAMES,
+  6: 'FLUSH',
+  5: 'FULL HOUSE',
 };
 
 function evaluate5Rank(cards: CardType[], gameType: GameType): number {

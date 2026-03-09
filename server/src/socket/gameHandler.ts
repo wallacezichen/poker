@@ -30,6 +30,7 @@ const pausedRooms = new Set<string>();
 type PendingJoinRequest = { requestId: string; roomId: string; playerName: string; socketId: string; requestedAt: string };
 const pendingJoinRequestsByRoom = new Map<string, Map<string, PendingJoinRequest>>();
 const pendingRebuyPromptsByRoom = new Map<string, Set<string>>();
+const rebuyCountsByRoom = new Map<string, Map<string, number>>();
 
 const PLAYER_COLORS = [
   '#e74c3c', '#3498db', '#2ecc71', '#f39c12',
@@ -131,6 +132,27 @@ function hasPendingRebuyPrompt(roomId: string, playerId: string): boolean {
   return pendingRebuyPromptsByRoom.get(roomId)?.has(playerId) ?? false;
 }
 
+function getRebuyCountMap(roomId: string): Map<string, number> {
+  if (!rebuyCountsByRoom.has(roomId)) rebuyCountsByRoom.set(roomId, new Map());
+  return rebuyCountsByRoom.get(roomId)!;
+}
+
+function getRebuyCountsSnapshot(roomId: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [pid, c] of getRebuyCountMap(roomId).entries()) {
+    if (c > 0) out[pid] = c;
+  }
+  return out;
+}
+
+function emitRebuyCounts(io: Server, roomId: string): void {
+  io.to(roomId).emit('game:rebuy_counts', { counts: getRebuyCountsSnapshot(roomId) });
+}
+
+function emitRebuyCountsToSocket(io: Server, socketId: string, roomId: string): void {
+  io.to(socketId).emit('game:rebuy_counts', { counts: getRebuyCountsSnapshot(roomId) });
+}
+
 export function registerGameHandlers(
   io: Server<ClientToServerEvents, ServerToClientEvents>,
   socket: Socket<ClientToServerEvents, ServerToClientEvents>
@@ -169,6 +191,7 @@ export function registerGameHandlers(
 
       const room = await getFullRoom(roomId);
       if (!room) return cb({ success: false, error: 'Failed to load room' });
+      emitRebuyCountsToSocket(io, socket.id, roomId);
       cb({ success: true, room, playerId });
     } catch (err: any) {
       console.error('room:create error', err);
@@ -259,6 +282,7 @@ export function registerGameHandlers(
         playerId,
         gameState: gameState ? sanitizeStateFor(gameState, playerId) : undefined,
       });
+      emitRebuyCountsToSocket(io, socket.id, roomId.toUpperCase());
     } catch (err: any) {
       console.error('room:join error', err);
       cb({ success: false, error: err.message });
@@ -310,6 +334,7 @@ export function registerGameHandlers(
         playerId,
         gameState: gameState ? sanitizeStateFor(gameState, playerId) : undefined,
       });
+      emitRebuyCountsToSocket(io, socket.id, roomIdUp);
     } catch (err: any) {
       console.error('room:resume error', err);
       cb({ success: false, error: err.message });
@@ -537,6 +562,7 @@ export function registerGameHandlers(
       playerId: playerIdNew,
       gameState: gameState ? sanitizeStateFor(gameState, playerIdNew) : undefined,
     });
+    emitRebuyCountsToSocket(io, req.socketId, roomId);
     io.to(req.socketId).emit('game:paused', pausedRooms.has(roomId));
     io.to(roomId).emit('room:updated', room!);
 
@@ -698,6 +724,26 @@ export function registerGameHandlers(
   });
 
   // ============================================================
+  // REVEAL UNUSED COMMUNITY CARDS (showdown only, shared)
+  // ============================================================
+  socket.on('game:reveal_dead_board', async (cb) => {
+    const session = socketToPlayer.get(socket.id);
+    if (!session) return cb({ success: false, error: 'Not in a room' });
+
+    const { roomId } = session;
+    const state = activeGames.get(roomId);
+    if (!state) return cb({ success: false, error: 'No active game' });
+    if (state.stage !== 'showdown') return cb({ success: false, error: 'Only available at showdown' });
+    if ((state.deadBoardCards?.length || 0) <= 0) return cb({ success: false, error: 'No unrevealed community cards' });
+    if (state.deadBoardRevealed) return cb({ success: true });
+
+    state.deadBoardRevealed = true;
+    await saveGameState(state);
+    broadcastGameState(io, roomId, state);
+    cb({ success: true });
+  });
+
+  // ============================================================
   // RUN IT TWICE VOTE (heads-up all-in)
   // ============================================================
   socket.on('game:run_it_twice_vote', async ({ agree }, cb) => {
@@ -762,7 +808,10 @@ export function registerGameHandlers(
       const nextBuyIn = Math.max(minBuyIn, Math.floor(buyIn ?? roomData.settings.startingChips));
       await updatePlayerChips(roomId, playerId, nextBuyIn);
       setPlayerAway(roomId, playerId, false);
+      const m = getRebuyCountMap(roomId);
+      m.set(playerId, (m.get(playerId) || 0) + 1);
       io.to(roomId).emit('game:player_rebuy', { playerId });
+      emitRebuyCounts(io, roomId);
     }
 
     const room = await getFullRoom(roomId);
@@ -795,7 +844,6 @@ export function registerGameHandlers(
     const isStreetAdvanceWithSuspense =
       (action === 'check' || action === 'call' || action === 'raise' || action === 'allin') &&
       state.stage !== 'showdown' &&
-      newState.stage !== 'showdown' &&
       state.stage !== newState.stage;
 
     if (isStreetAdvanceWithSuspense) {
@@ -804,6 +852,29 @@ export function registerGameHandlers(
       suspenseState.communityCards = newState.communityCards.slice(0, communityCountForStage(state.stage));
       suspenseState.currentPlayerIndex = -1;
       suspenseState.playersToAct = [];
+      suspenseState.winners = undefined;
+      for (const p of suspenseState.players) {
+        p.handResult = undefined;
+        p.runItTwiceHandNamesZh = undefined;
+      }
+      // Keep this street's full bet layout visible during suspense window:
+      // start from previous street bets, then apply last action "to" amount.
+      const prevBetById = new Map(state.players.map((p) => [p.id, p.bet]));
+      for (const p of suspenseState.players) {
+        p.bet = Number(prevBetById.get(p.id) || 0);
+      }
+
+      // Ensure last actor uses the final "to" amount for call/raise/all-in bubble.
+      const lastAction = suspenseState.actionLog[suspenseState.actionLog.length - 1];
+      if (
+        lastAction &&
+        lastAction.playerId === playerId &&
+        (lastAction.action === 'call' || lastAction.action === 'raise' || lastAction.action === 'allin') &&
+        Number(lastAction.amount || 0) > 0
+      ) {
+        const actor = suspenseState.players.find((p) => p.id === playerId);
+        if (actor) actor.bet = Number(lastAction.amount || 0);
+      }
 
       activeGames.set(roomId, suspenseState);
       saveGameState(suspenseState).catch(console.error);
@@ -896,6 +967,7 @@ export function registerGameHandlers(
         pausedRooms.delete(roomId);
         pendingJoinRequestsByRoom.delete(roomId);
         pendingRebuyPromptsByRoom.delete(roomId);
+        rebuyCountsByRoom.delete(roomId);
         clearRunoutTimer(roomId);
         const revealTimer = streetRevealTimers.get(roomId);
         if (revealTimer) {
@@ -1010,7 +1082,8 @@ function maybeStartRunItTwiceOffer(io: Server, roomId: string, state: FullGameSt
 function finishShowdown(io: Server, roomId: string, state: FullGameState): void {
   (async () => {
     const roomData = await getRoom(roomId);
-    const twoSevenEnabled = !!roomData?.settings?.twoSevenEnabled;
+    const roomGameType = normalizeGameType(roomData?.settings?.gameType ?? state.gameType);
+    const twoSevenEnabled = roomGameType === 'regular' && !!roomData?.settings?.twoSevenEnabled;
     const twoSevenAmount = Math.max(1, Math.floor(roomData?.settings?.twoSevenAmount ?? 100));
     state.twoSevenBonus = undefined;
 
@@ -1042,6 +1115,15 @@ function finishShowdown(io: Server, roomId: string, state: FullGameState): void 
           };
         }
       }
+    }
+
+    const missingBoardCount = Math.max(0, 5 - (state.communityCards?.length || 0));
+    if (missingBoardCount > 0) {
+      state.deadBoardCards = state.deck.slice(state.deckIndex, state.deckIndex + missingBoardCount);
+      state.deadBoardRevealed = false;
+    } else {
+      state.deadBoardCards = [];
+      state.deadBoardRevealed = false;
     }
 
     await saveGameState(state);

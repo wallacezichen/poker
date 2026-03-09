@@ -182,7 +182,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
               >
                 短牌
               </button>
-              <button
+              {/* <button
                 onClick={() => setGameType('omaha')}
                 className={clsx(
                   'px-3 py-2.5 rounded-xl text-sm border transition-all',
@@ -199,7 +199,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                 )}
               >
                 疯狂大菠萝
-              </button>
+              </button> */}
             </div>
           </div>
 

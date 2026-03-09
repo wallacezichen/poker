@@ -39,6 +39,7 @@ interface GameStore {
   rebuyPrompt: { minBuyIn: number; defaultBuyIn: number } | null;
   setRebuyPrompt: (v: { minBuyIn: number; defaultBuyIn: number } | null) => void;
   rebuyCountByPlayerId: Record<string, number>;
+  setRebuyCountMap: (v: Record<string, number>) => void;
   addRebuyBadgePlayer: (playerId: string) => void;
 
   // UI state
@@ -90,6 +91,7 @@ export const useGameStore = create<GameStore>((set) => ({
   rebuyPrompt: null,
   setRebuyPrompt: (rebuyPrompt) => set({ rebuyPrompt }),
   rebuyCountByPlayerId: {},
+  setRebuyCountMap: (rebuyCountByPlayerId) => set({ rebuyCountByPlayerId: { ...rebuyCountByPlayerId } }),
   addRebuyBadgePlayer: (playerId) => set((s) => {
     return {
       rebuyCountByPlayerId: {

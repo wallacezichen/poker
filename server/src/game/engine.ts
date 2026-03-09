@@ -507,7 +507,8 @@ export function applyAction(
       player.bet += callAmt;
       player.totalBet += callAmt;
       state.pot += callAmt;
-      logEntry.amount = callAmt;
+      // Use unified "to" amount for UI bubbles (instead of delta)
+      logEntry.amount = player.bet;
       if (player.chips === 0) player.allIn = true;
       removePlayerToAct(state, player.id);
       break;
@@ -571,7 +572,8 @@ export function applyAction(
       state.pot += allinAmt;
       player.chips = 0;
       player.allIn = true;
-      logEntry.amount = allinAmt;
+      // Use unified "to" amount for UI bubbles (instead of delta)
+      logEntry.amount = player.bet;
       break;
     }
   }
