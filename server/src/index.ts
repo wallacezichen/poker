@@ -21,6 +21,7 @@ app.use(cors({ origin: [CLIENT_URL, 'http://localhost:3000'], credentials: true 
 app.use(express.json());
 
 // Health check
+app.get('/', (_, res) => res.status(200).send('ok'));
 app.get('/health', (_, res) => res.json({ ok: true, ts: new Date().toISOString() }));
 
 // REST API
