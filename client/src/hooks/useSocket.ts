@@ -37,8 +37,40 @@ export function useSocket() {
 
     if (!s.connected) s.connect();
 
-    s.on('connect', () => setConnected(true));
-    s.on('disconnect', () => setConnected(false));
+    const onConnect = () => {
+      setConnected(true);
+      const { room, myPlayerId } = useGameStore.getState();
+      // After transient disconnect/reconnect, socket.id changes and server session is lost.
+      // Re-bind this socket to the same player session if we already have local room identity.
+      if (room?.id && myPlayerId) {
+        s.emit('room:resume', { roomId: room.id, playerId: myPlayerId }, (res) => {
+          if (res.success && res.room && res.playerId) {
+            setRoom(res.room);
+            setMyPlayerId(res.playerId);
+            if (res.gameState) setGameState(res.gameState);
+            const me = res.room.players.find((p) => p.id === res.playerId);
+            saveRoomIdentity(res.room.id, res.playerId, me?.name);
+          } else if (res.error) {
+            console.warn('[Socket] auto-resume failed:', res.error);
+          }
+        });
+      }
+    };
+    const onDisconnect = (reason: string) => {
+      setConnected(false);
+      console.warn('[Socket] disconnected:', reason);
+    };
+    const onConnectError = (err: Error) => {
+      console.warn('[Socket] connect_error:', err.message);
+    };
+    const onReconnectAttempt = (attempt: number) => {
+      console.log('[Socket] reconnect_attempt:', attempt);
+    };
+
+    s.on('connect', onConnect);
+    s.on('disconnect', onDisconnect);
+    s.on('connect_error', onConnectError);
+    s.io.on('reconnect_attempt', onReconnectAttempt);
 
     s.on('room:updated', (room) => setRoom(room));
     s.on('room:join_request', (req) => addJoinRequest(req));
@@ -248,8 +280,10 @@ export function useSocket() {
     });
 
     return () => {
-      s.off('connect');
-      s.off('disconnect');
+      s.off('connect', onConnect);
+      s.off('disconnect', onDisconnect);
+      s.off('connect_error', onConnectError);
+      s.io.off('reconnect_attempt', onReconnectAttempt);
       s.off('room:updated');
       s.off('room:join_request');
       s.off('room:join_approved');

@@ -233,7 +233,7 @@ export default function RoomPage() {
   }
 
   // Loading state
-  if (!isConnected) {
+  if (!isConnected && !room) {
     const theme = GAME_THEME[roomPreviewGameType];
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>

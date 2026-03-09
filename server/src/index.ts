@@ -16,6 +16,23 @@ const hasSupabaseServiceKey = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 const app = express();
 const httpServer = createServer(app);
 
+// Process-level diagnostics: helps identify why Render restarts the service.
+process.on('SIGTERM', () => {
+  console.error(`[PROC] SIGTERM at ${new Date().toISOString()}`);
+});
+process.on('SIGINT', () => {
+  console.error(`[PROC] SIGINT at ${new Date().toISOString()}`);
+});
+process.on('uncaughtException', (err) => {
+  console.error(`[PROC] uncaughtException at ${new Date().toISOString()}:`, err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(`[PROC] unhandledRejection at ${new Date().toISOString()}:`, reason);
+});
+process.on('exit', (code) => {
+  console.error(`[PROC] exit code=${code} at ${new Date().toISOString()}`);
+});
+
 // CORS
 app.use(cors({ origin: [CLIENT_URL, 'http://localhost:3000'], credentials: true }));
 app.use(express.json());
@@ -51,3 +68,11 @@ httpServer.listen(PORT, HOST, () => {
   console.log(`   SUPABASE_SERVICE_ROLE_KEY set: ${hasSupabaseServiceKey}`);
   console.log(`   Health: /health\n`);
 });
+
+setInterval(() => {
+  const mu = process.memoryUsage();
+  const toMb = (n: number) => (n / 1024 / 1024).toFixed(1);
+  console.log(
+    `[PROC] heartbeat ts=${new Date().toISOString()} rssMB=${toMb(mu.rss)} heapUsedMB=${toMb(mu.heapUsed)} heapTotalMB=${toMb(mu.heapTotal)} externalMB=${toMb(mu.external)}`
+  );
+}, 60_000);
