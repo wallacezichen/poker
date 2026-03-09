@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useSocket } from '../../../hooks/useSocket';
 import { useGameStore } from '../../../store/gameStore';
 import WaitingRoom from '../../../components/WaitingRoom';
@@ -38,6 +38,7 @@ const GAME_THEME: Record<GameType, { bg: string; panel: string; badge: string; l
 export default function RoomPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const roomId = (params?.id as string)?.toUpperCase();
 
   const {
@@ -53,7 +54,16 @@ export default function RoomPage() {
   const [resumeChecked, setResumeChecked] = useState(false);
   const [rebuyAmount, setRebuyAmount] = useState('');
   const [rebuySubmitting, setRebuySubmitting] = useState(false);
-  const [roomPreviewGameType, setRoomPreviewGameType] = useState<GameType>('short_deck');
+  const queryGameType = (() => {
+    const g = (searchParams.get('g') || '').toLowerCase();
+    if (g === 'regular' || g === 'short_deck' || g === 'omaha' || g === 'crazy_pineapple') return g as GameType;
+    return null;
+  })();
+  const [roomPreviewGameType, setRoomPreviewGameType] = useState<GameType>(queryGameType || 'short_deck');
+
+  useEffect(() => {
+    if (queryGameType) setRoomPreviewGameType(queryGameType);
+  }, [queryGameType]);
 
   useEffect(() => {
     let cancelled = false;
@@ -219,8 +229,9 @@ export default function RoomPage() {
 
   // Loading state
   if (!isConnected) {
+    const theme = GAME_THEME[roomPreviewGameType];
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#061510' }}>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>
         <div className="text-center">
           <div className="font-display text-gold text-3xl tracking-widest mb-2">连接中...</div>
           <div className="text-white/30 text-sm">正在连接到服务器</div>
@@ -231,8 +242,9 @@ export default function RoomPage() {
 
   // Direct link join — ask for name
   if (resuming && !room) {
+    const theme = GAME_THEME[roomPreviewGameType];
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: '#061510' }}>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>
         <div className="text-white/50">恢复玩家身份中...</div>
       </div>
     );
@@ -287,8 +299,9 @@ export default function RoomPage() {
 
   if (!room) {
     if (joinPending && joinPending.roomId === roomId) {
+      const theme = GAME_THEME[roomPreviewGameType];
       return (
-        <div className="min-h-screen flex items-center justify-center" style={{ background: '#061510' }}>
+        <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>
           <div className="w-full max-w-md bg-black/35 border border-white/20 rounded-xl p-6 text-center text-white">
             <div className="text-2xl font-semibold mb-2">
               {joinPending.status === 'pending' ? '等待房主审批加入请求' : '加入请求被拒绝'}

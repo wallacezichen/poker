@@ -124,6 +124,7 @@ export default function GameTable({
   const [managing, setManaging] = useState(false);
   const [checkBubblePlayers, setCheckBubblePlayers] = useState<Set<string>>(new Set());
   const [showSessionLedger, setShowSessionLedger] = useState(false);
+  const [optimisticBetBubble, setOptimisticBetBubble] = useState<{ playerId: string; amount: number } | null>(null);
   const [showOptionsModal, setShowOptionsModal] = useState(false);
   const [smallBlindDraft, setSmallBlindDraft] = useState('50');
   const [bigBlindDraft, setBigBlindDraft] = useState('100');
@@ -149,6 +150,7 @@ export default function GameTable({
   const [twoSevenAnimPhase, setTwoSevenAnimPhase] = useState<'collect' | 'award' | null>(null);
   const twoSevenAnimTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const twoSevenAnimHandRef = useRef<number>(0);
+  const optimisticBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Find my player
   const myPlayer = gameState.players.find(p => p.id === myPlayerId);
@@ -196,6 +198,7 @@ export default function GameTable({
     .filter((p): p is (typeof roomPlayersSorted)[number] => !!p);
 
   const callAmt = myPlayer ? Math.min(gameState.currentBet - myPlayer.bet, myPlayer.chips) : 0;
+  const callTo = myPlayer ? Math.min(gameState.currentBet, myPlayer.bet + myPlayer.chips) : 0;
   const canCheck = myPlayer ? gameState.currentBet <= myPlayer.bet : false;
   const minRaiseTo = gameState.currentBet + (gameState.lastRaiseSize ?? gameState.bigBlind);
   const minRaise = myPlayer ? Math.min(minRaiseTo, myPlayer.chips + myPlayer.bet) : 0;
@@ -403,14 +406,37 @@ export default function GameTable({
   useEffect(() => {
     return () => {
       if (optionsToastTimerRef.current) clearTimeout(optionsToastTimerRef.current);
+      if (optimisticBetTimerRef.current) clearTimeout(optimisticBetTimerRef.current);
     };
   }, []);
 
   const triggerPrimaryAction = () => {
     if (!canAct) return;
     if (callAmt > 0) {
+      if (myPlayerId) {
+        setCheckBubblePlayers((prev) => {
+          const next = new Set(prev);
+          next.delete(myPlayerId);
+          return next;
+        });
+        setOptimisticBetBubble({ playerId: myPlayerId, amount: callTo });
+        if (optimisticBetTimerRef.current) clearTimeout(optimisticBetTimerRef.current);
+        optimisticBetTimerRef.current = setTimeout(() => setOptimisticBetBubble(null), 2500);
+      }
+      playBetSound();
       onAction('call');
     } else if (canQuickBet) {
+      if (myPlayerId) {
+        setCheckBubblePlayers((prev) => {
+          const next = new Set(prev);
+          next.delete(myPlayerId);
+          return next;
+        });
+        setOptimisticBetBubble({ playerId: myPlayerId, amount: minRaise });
+        if (optimisticBetTimerRef.current) clearTimeout(optimisticBetTimerRef.current);
+        optimisticBetTimerRef.current = setTimeout(() => setOptimisticBetBubble(null), 2500);
+      }
+      playBetSound();
       onAction('raise', minRaise);
     }
   };
@@ -425,6 +451,17 @@ export default function GameTable({
 
   const submitRaiseAction = () => {
     if (!canAct || !canRaise || !showRaisePanel) return;
+    if (myPlayerId) {
+      setCheckBubblePlayers((prev) => {
+        const next = new Set(prev);
+        next.delete(myPlayerId);
+        return next;
+      });
+      setOptimisticBetBubble({ playerId: myPlayerId, amount: safeRaise });
+      if (optimisticBetTimerRef.current) clearTimeout(optimisticBetTimerRef.current);
+      optimisticBetTimerRef.current = setTimeout(() => setOptimisticBetBubble(null), 2500);
+    }
+    playBetSound();
     onAction('raise', safeRaise);
     setShowRaisePanel(false);
   };
@@ -550,6 +587,7 @@ export default function GameTable({
     // Round ended (or new hand): clear all action bubbles immediately.
     if (stageChanged || handChanged) {
       setCheckBubblePlayers(new Set());
+      setOptimisticBetBubble(null);
       prevStageRef.current = gameState.stage;
       prevHandRef.current = gameState.handNumber;
       prevActionLenRef.current = gameState.actionLog.length;
@@ -564,6 +602,9 @@ export default function GameTable({
         for (const entry of newEntries) {
           if (entry.action === 'check') next.add(entry.playerId);
           else next.delete(entry.playerId);
+          if (myPlayerId && entry.playerId === myPlayerId && (entry.action === 'call' || entry.action === 'raise' || entry.action === 'allin')) {
+            setOptimisticBetBubble(null);
+          }
         }
         return next;
       });
@@ -572,7 +613,7 @@ export default function GameTable({
     prevStageRef.current = gameState.stage;
     prevHandRef.current = gameState.handNumber;
     prevActionLenRef.current = gameState.actionLog.length;
-  }, [gameState.stage, gameState.handNumber, gameState.actionLog]);
+  }, [gameState.stage, gameState.handNumber, gameState.actionLog, myPlayerId]);
 
   useEffect(() => {
     if (!manageTargetId) return;
@@ -1410,6 +1451,8 @@ export default function GameTable({
                     (bombIntroRunning &&
                       gameState.bombPot?.active &&
                       roomPlayer.id === bombIntroOrderIds[Math.min(bombIntroStep, Math.max(0, bombIntroOrderIds.length - 1))]) ||
+                    (!!optimisticBetBubble &&
+                      roomPlayer.id === optimisticBetBubble.playerId) ||
                     (twoSevenAnimRunning &&
                       twoSevenAnimPhase === 'collect' &&
                       roomPlayer.id === twoSevenCurrentCollectEntry?.playerId) ||
@@ -1423,10 +1466,13 @@ export default function GameTable({
                     gameState.bombPot?.active &&
                     roomPlayer.id === bombIntroOrderIds[Math.min(bombIntroStep, Math.max(0, bombIntroOrderIds.length - 1))]
                       ? Number(gameState.bombPot?.amount || 0)
-                        : twoSevenAnimRunning &&
+                      : twoSevenAnimRunning &&
                           twoSevenAnimPhase === 'collect' &&
                           roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
                         ? Number(twoSevenCurrentCollectEntry?.amount || 0)
+                        : optimisticBetBubble &&
+                            roomPlayer.id === optimisticBetBubble.playerId
+                          ? Number(optimisticBetBubble.amount || 0)
                         : twoSevenAnimRunning &&
                             twoSevenAnimPhase === 'award' &&
                             !!twoSevenBonus &&
@@ -1599,7 +1645,7 @@ export default function GameTable({
           {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && !showRaisePanel && !isDiscardStage && (
             <div className={clsx('grid gap-2 w-full', showPrimaryAction ? 'grid-cols-4' : 'grid-cols-3')}>
             {showPrimaryAction && (
-              <ActionBox
+                <ActionBox
                 hotkey="C"
                 label={callAmt > 0 ? `CALL ${formatChips(callAmt)}` : `BET ${formatChips(gameState.bigBlind)}`}
                 disabled={!canAct}

@@ -792,13 +792,13 @@ export function registerGameHandlers(
     const { state: newState, error } = applyAction(state, playerId, action, amount);
     if (error) return cb({ success: false, error });
 
-    const isCheckStreetAdvance =
-      action === 'check' &&
+    const isStreetAdvanceWithSuspense =
+      (action === 'check' || action === 'call' || action === 'raise' || action === 'allin') &&
       state.stage !== 'showdown' &&
       newState.stage !== 'showdown' &&
       state.stage !== newState.stage;
 
-    if (isCheckStreetAdvance) {
+    if (isStreetAdvanceWithSuspense) {
       const suspenseState = JSON.parse(JSON.stringify(newState)) as FullGameState;
       suspenseState.stage = state.stage;
       suspenseState.communityCards = newState.communityCards.slice(0, communityCountForStage(state.stage));

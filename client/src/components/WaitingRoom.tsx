@@ -19,7 +19,7 @@ export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLea
   const [copied, setCopied] = useState(false);
   const isHost = room.hostId === myPlayerId;
   const shareLink = typeof window !== 'undefined'
-    ? `${window.location.origin}/room/${room.id}`
+    ? `${window.location.origin}/room/${room.id}?g=${encodeURIComponent(room.settings.gameType || 'short_deck')}`
     : `/room/${room.id}`;
 
   function copyLink() {
