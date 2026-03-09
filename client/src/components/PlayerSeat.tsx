@@ -147,13 +147,16 @@ export default function PlayerSeat({
             </div>
           )}
 
-          {(autoPostActive || player.bet > 0) && (
+          {!showCheckBubble && (autoPostActive || player.bet > 0) && (
             <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-lime-300 text-black rounded-full w-12 h-12 text-xl font-bold flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.35)]">
               {formatChips(autoPostActive ? (autoPostAmount ?? 0) : player.bet)}
             </div>
           )}
-          {player.bet === 0 && showCheckBubble && (
-            <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-sky-200 text-sky-900 rounded-full px-3 h-11 text-xs font-extrabold tracking-wide flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.35)]">
+          {showCheckBubble && (
+            <div
+              className="absolute -top-12 left-1/2 -translate-x-1/2 rounded-full px-4 h-11 border border-slate-300/45 bg-[#2a2e35] text-white text-[0.8rem] font-bold tracking-[0.06em] flex items-center justify-center shadow-[0_10px_24px_rgba(0,0,0,0.52)]"
+              style={{ fontFamily: 'Arial, sans-serif' }}
+            >
               Check
             </div>
           )}

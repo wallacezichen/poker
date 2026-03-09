@@ -21,6 +21,8 @@ const roomSockets = new Map<string, Map<string, string>>();
 const actionTimers = new Map<string, NodeJS.Timeout>();
 // Delayed board runout timers (all-in suspense reveal)
 const runoutTimers = new Map<string, NodeJS.Timeout>();
+// Delayed street reveal timers (last-check suspense reveal)
+const streetRevealTimers = new Map<string, NodeJS.Timeout>();
 // Map roomId -> players marked away (observer only, skipped in next hands)
 const awayPlayersByRoom = new Map<string, Set<string>>();
 // Room pause state
@@ -71,6 +73,13 @@ function randomId(len = 8) {
 
 function roomCode() {
   return Math.random().toString(36).substr(2, 6).toUpperCase();
+}
+
+function communityCountForStage(stage: FullGameState['stage']): number {
+  if (stage === 'flop' || stage === 'flop_discard') return 3;
+  if (stage === 'turn') return 4;
+  if (stage === 'river' || stage === 'showdown') return 5;
+  return 0;
 }
 
 function nowIso() {
@@ -773,6 +782,7 @@ export function registerGameHandlers(
 
     const { roomId, playerId } = session;
     if (pausedRooms.has(roomId)) return cb({ success: false, error: 'Game is paused' });
+    if (streetRevealTimers.has(roomId)) return cb({ success: false, error: 'Waiting for next card reveal' });
     const state = activeGames.get(roomId);
     if (!state) return cb({ success: false, error: 'No active game' });
 
@@ -782,14 +792,47 @@ export function registerGameHandlers(
     const { state: newState, error } = applyAction(state, playerId, action, amount);
     if (error) return cb({ success: false, error });
 
+    const isCheckStreetAdvance =
+      action === 'check' &&
+      state.stage !== 'showdown' &&
+      newState.stage !== 'showdown' &&
+      state.stage !== newState.stage;
+
+    if (isCheckStreetAdvance) {
+      const suspenseState = JSON.parse(JSON.stringify(newState)) as FullGameState;
+      suspenseState.stage = state.stage;
+      suspenseState.communityCards = newState.communityCards.slice(0, communityCountForStage(state.stage));
+      suspenseState.currentPlayerIndex = -1;
+      suspenseState.playersToAct = [];
+
+      activeGames.set(roomId, suspenseState);
+      saveGameState(suspenseState).catch(console.error);
+      cb({ success: true });
+      broadcastGameState(io, roomId, suspenseState);
+
+      const revealTimer = setTimeout(() => {
+        streetRevealTimers.delete(roomId);
+        activeGames.set(roomId, newState);
+        saveGameState(newState).catch(console.error);
+        broadcastGameState(io, roomId, newState);
+
+        if (newState.stage === 'showdown') {
+          finishShowdown(io, roomId, newState);
+        } else if (maybeStartRunItTwiceOffer(io, roomId, newState)) {
+          // wait for yes/no votes
+        } else if (shouldAutoRunout(newState)) {
+          startDelayedRunout(io, roomId);
+        } else {
+          scheduleCurrentPlayerAction(io, roomId, newState);
+        }
+      }, 1500);
+      streetRevealTimers.set(roomId, revealTimer);
+      return;
+    }
+
     activeGames.set(roomId, newState);
-
-    // Save to DB async
     saveGameState(newState).catch(console.error);
-
     cb({ success: true });
-
-    // Broadcast updated state
     broadcastGameState(io, roomId, newState);
 
     if (newState.stage === 'showdown') {
@@ -854,6 +897,11 @@ export function registerGameHandlers(
         pendingJoinRequestsByRoom.delete(roomId);
         pendingRebuyPromptsByRoom.delete(roomId);
         clearRunoutTimer(roomId);
+        const revealTimer = streetRevealTimers.get(roomId);
+        if (revealTimer) {
+          clearTimeout(revealTimer);
+          streetRevealTimers.delete(roomId);
+        }
       }
     }
 

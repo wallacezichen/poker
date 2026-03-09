@@ -5,7 +5,7 @@ import Card from './Card';
 import PlayerSeat from './PlayerSeat';
 import { useGameStore } from '../store/gameStore';
 import clsx from 'clsx';
-import { getSoundSettings, playBetSound, setSoundSettings } from '../lib/soundEffects';
+import { getSoundSettings, playBetSound, playCheckSound, playFlopSound, playRiverSound, playTurnSound, setSoundSettings } from '../lib/soundEffects';
 
 // Seat positions as percentage [top, left] on the oval table
 // Position 0 = bottom center (always my seat), others go clockwise
@@ -142,6 +142,8 @@ export default function GameTable({
   const optionsToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bombIntroTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const bombIntroHandRef = useRef<number>(0);
+  const prevStageSfxRef = useRef(gameState.stage);
+  const prevHandSfxRef = useRef(gameState.handNumber);
   const [twoSevenAnimRunning, setTwoSevenAnimRunning] = useState(false);
   const [twoSevenAnimStep, setTwoSevenAnimStep] = useState(0);
   const [twoSevenAnimPhase, setTwoSevenAnimPhase] = useState<'collect' | 'award' | null>(null);
@@ -151,6 +153,14 @@ export default function GameTable({
   // Find my player
   const myPlayer = gameState.players.find(p => p.id === myPlayerId);
   const bombAnteEntries = gameState.actionLog.filter((e) => e.action === 'bomb_ante');
+  const bombAnteByPlayerId = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const e of bombAnteEntries) {
+      if (!e.playerId) continue;
+      m.set(e.playerId, Number(e.amount || 0));
+    }
+    return m;
+  }, [bombAnteEntries]);
   const bombIntroOrderIds = useMemo(() => {
     if (!gameState.bombPot?.active || gameState.players.length === 0) return [] as string[];
     const n = gameState.players.length;
@@ -166,6 +176,15 @@ export default function GameTable({
   const isDiscardStage = gameState.stage === 'flop_discard' && (room.settings.gameType ?? 'short_deck') === 'crazy_pineapple';
   const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === myPlayerId;
   const canAct = isMyTurn && !bombIntroRunning && !myPlayer?.folded && !myPlayer?.allIn && gameState.stage !== 'showdown' && !isGamePaused;
+  const displayedPot = useMemo(() => {
+    if (!bombIntroRunning || !gameState.bombPot?.active) return gameState.pot;
+    const visibleCount = Math.min(bombIntroStep + 1, bombIntroOrderIds.length);
+    let total = 0;
+    for (let i = 0; i < visibleCount; i++) {
+      total += bombAnteByPlayerId.get(bombIntroOrderIds[i]) || 0;
+    }
+    return total;
+  }, [bombIntroRunning, gameState.bombPot?.active, gameState.pot, bombIntroStep, bombIntroOrderIds, bombAnteByPlayerId]);
 
   // Reorder players so my seat is at position 0
   const inHandById = new Map(gameState.players.map((p, idx) => [p.id, { player: p, idx }]));
@@ -411,7 +430,17 @@ export default function GameTable({
   };
 
   const triggerCheckAction = () => {
-    if (canAct && canCheck) onAction('check');
+    if (canAct && canCheck) {
+      if (myPlayerId) {
+        setCheckBubblePlayers((prev) => {
+          const next = new Set(prev);
+          next.add(myPlayerId);
+          return next;
+        });
+      }
+      playCheckSound();
+      onAction('check');
+    }
   };
 
   const triggerFoldAction = () => {
@@ -555,6 +584,18 @@ export default function GameTable({
     }
     setManageChips(String(target.chips));
   }, [manageTargetId, room.players]);
+
+  useEffect(() => {
+    const stageChanged = prevStageSfxRef.current !== gameState.stage;
+    const handChanged = prevHandSfxRef.current !== gameState.handNumber;
+    if (stageChanged && !handChanged) {
+      if (gameState.stage === 'flop') playFlopSound();
+      else if (gameState.stage === 'turn') playTurnSound();
+      else if (gameState.stage === 'river') playRiverSound();
+    }
+    prevStageSfxRef.current = gameState.stage;
+    prevHandSfxRef.current = gameState.handNumber;
+  }, [gameState.stage, gameState.handNumber]);
 
   useEffect(() => {
     function updateScale() {
@@ -1111,7 +1152,7 @@ export default function GameTable({
             <div className="absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
               <div className="flex items-center gap-2">
                 <div className="px-14 py-1 rounded-full bg-black/18 border border-black/15 font-semibold text-4xl">
-                  {formatChips(gameState.pot)}
+                  {formatChips(displayedPot)}
                 </div>
                 {gameState.bombPot?.active && (
                   <div className="flex items-center gap-1 rounded-full bg-rose-900/70 border border-rose-200/40 px-3 py-1">
@@ -1364,7 +1405,7 @@ export default function GameTable({
                   communityCards={gameState.communityCards}
                   winsCount={winsByPlayer[roomPlayer.id] || 0}
                   statusText={!inHand ? (roomPlayer.isAway ? 'AWAY' : 'WAIT NEXT HAND') : undefined}
-                  showCheckBubble={inHand?.player.bet === 0 && checkBubblePlayers.has(roomPlayer.id)}
+                  showCheckBubble={checkBubblePlayers.has(roomPlayer.id)}
                   autoPostActive={
                     (bombIntroRunning &&
                       gameState.bombPot?.active &&
