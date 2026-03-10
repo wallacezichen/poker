@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { Room } from '../types/poker';
 import clsx from 'clsx';
+import { useI18n } from '../i18n/LanguageProvider';
 
 interface WaitingRoomProps {
   room: Room;
@@ -16,6 +17,7 @@ function formatChips(n: number): string {
 }
 
 export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLeave }: WaitingRoomProps) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const isHost = room.hostId === myPlayerId;
   const shareLink = typeof window !== 'undefined'
@@ -32,12 +34,12 @@ export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLea
     ? room.settings.gameType
     : 'short_deck';
   const gameLabel = normalizedGameType === 'short_deck'
-    ? '短牌德州'
+    ? t('game.short_deck.pill')
     : normalizedGameType === 'regular'
-      ? '常规德州'
+      ? t('game.regular.pill')
       : normalizedGameType === 'omaha'
-        ? '奥马哈'
-        : 'Crazy Pineapple';
+        ? t('game.omaha.pill')
+        : t('game.crazy_pineapple.title');
   const waitingBg = normalizedGameType === 'short_deck'
     ? 'radial-gradient(ellipse at center, #1a4a2e 0%, #0a1f12 100%)'
     : normalizedGameType === 'regular'
@@ -71,12 +73,12 @@ export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLea
           <span className={clsx('inline-block text-xs font-bold px-3 py-1 rounded-full mb-3', badgeClass)}>
             {gameLabel}
           </span>
-          <h1 className="font-display text-4xl text-gold tracking-widest">等待玩家加入</h1>
+          <h1 className="font-display text-4xl text-gold tracking-widest">{t('waiting.title')}</h1>
         </div>
 
         {/* Room code */}
         <div className="text-center mb-4">
-          <div className="text-xs text-white/40 uppercase tracking-widest mb-1">房间码</div>
+          <div className="text-xs text-white/40 uppercase tracking-widest mb-1">{t('waiting.room_code')}</div>
           <div
             onClick={copyLink}
             className="font-display text-5xl text-gold tracking-[12px] bg-black/30 rounded-xl py-3 cursor-pointer hover:bg-gold/10 transition-colors border border-gold/10"
@@ -94,14 +96,14 @@ export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLea
             copied && 'border-green-500/50 bg-green-900/20 text-green-400'
           )}
         >
-          {copied ? '✓ 链接已复制!' : shareLink}
+          {copied ? t('waiting.link_copied') : shareLink}
         </div>
-        <p className="text-[0.7rem] text-white/30 text-center mb-6">点击复制链接 · 发给朋友</p>
+        <p className="text-[0.7rem] text-white/30 text-center mb-6">{t('common.copy_link')}</p>
 
         {/* Players */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-white/40 uppercase tracking-widest">玩家列表</span>
+            <span className="text-xs text-white/40 uppercase tracking-widest">{t('waiting.players')}</span>
             <span className="text-xs text-white/40">{room.players.length}/{room.settings.maxPlayers}</span>
           </div>
 
@@ -124,11 +126,11 @@ export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLea
                   <div className="text-sm font-medium text-white">
                     {player.name}
                     {player.isBot && <span className="text-white/40 ml-1">🤖</span>}
-                    {player.id === myPlayerId && <span className="text-blue-400 ml-1 text-xs">(我)</span>}
+                    {player.id === myPlayerId && <span className="text-blue-400 ml-1 text-xs">{t('waiting.me')}</span>}
                   </div>
                 </div>
                 {player.id === room.hostId && (
-                  <span className="text-[0.65rem] bg-gold/80 text-black font-bold px-2 py-0.5 rounded">房主</span>
+                  <span className="text-[0.65rem] bg-gold/80 text-black font-bold px-2 py-0.5 rounded">{t('waiting.host')}</span>
                 )}
                 <span className="font-display text-gold text-sm">{formatChips(room.settings.startingChips)}</span>
               </div>
@@ -139,14 +141,14 @@ export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLea
         {/* Settings (host only) */}
         {isHost && (
           <div className="mb-6 bg-black/20 rounded-xl p-4 border border-white/5">
-            <div className="text-xs text-white/40 uppercase tracking-widest mb-3">游戏设置</div>
+            <div className="text-xs text-white/40 uppercase tracking-widest mb-3">{t('waiting.settings')}</div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-white/40 block mb-1">初始筹码</label>
+                <label className="text-xs text-white/40 block mb-1">{t('waiting.starting_chips')}</label>
                 <div className="text-white/70 text-sm">{formatChips(room.settings.startingChips)}</div>
               </div>
               <div>
-                <label className="text-xs text-white/40 block mb-1">盲注</label>
+                <label className="text-xs text-white/40 block mb-1">{t('waiting.blinds')}</label>
                 <div className="text-white/70 text-sm">{room.settings.smallBlind}/{room.settings.bigBlind}</div>
               </div>
             </div>
@@ -167,21 +169,21 @@ export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLea
                     : 'bg-white/5 text-white/20 cursor-not-allowed'
                 )}
               >
-                开始游戏
+                {t('waiting.start_game')}
               </button>
               <button
                 onClick={onAddBot}
                 disabled={room.players.length >= room.settings.maxPlayers}
                 className="w-full py-2.5 rounded-xl border border-white/10 text-white/60 hover:bg-white/5 hover:text-white transition-all font-medium text-sm"
               >
-                ➕ 添加机器人
+                {t('waiting.add_bot')}
               </button>
             </>
           )}
 
           {!isHost && (
             <div className="text-center text-white/40 text-sm py-2 bg-black/20 rounded-xl border border-white/5">
-              ⏳ 等待房主开始游戏...
+              {t('waiting.wait_host')}
             </div>
           )}
 
@@ -189,7 +191,7 @@ export default function WaitingRoom({ room, myPlayerId, onStart, onAddBot, onLea
             onClick={onLeave}
             className="w-full py-2 text-white/30 hover:text-white/60 text-sm transition-colors"
           >
-            离开房间
+            {t('common.leave_room')}
           </button>
         </div>
       </div>

@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import clsx from 'clsx';
 import { GameType, RoomSettings } from '../types/poker';
+import { useI18n } from '../i18n/LanguageProvider';
 
 interface LobbyProps {
   onCreateRoom: (name: string, settings: Partial<RoomSettings>) => Promise<{ success: boolean; error?: string }>;
@@ -24,41 +25,41 @@ const BLIND_OPTIONS = [
 ];
 
 const GAME_THEME: Record<GameType, {
-  title: string;
-  subtitle: string;
-  badge: string;
+  titleKey: string;
+  subtitleKey: string;
+  badgeKey: string;
   pageBg: string;
   cardBg: string;
   activePill: string;
 }> = {
   short_deck: {
-    title: '短牌扑克',
-    subtitle: "Short Deck Texas Hold'em",
-    badge: '6+',
+    titleKey: 'game.short_deck.title',
+    subtitleKey: 'game.short_deck.subtitle',
+    badgeKey: 'game.short_deck.badge',
     pageBg: 'radial-gradient(ellipse at center, #1a4a2e 0%, #061510 100%)',
     cardBg: 'bg-white/5 border-gold/20',
     activePill: 'bg-gold/85 text-black border-gold',
   },
   regular: {
-    title: '德州扑克',
-    subtitle: "Texas Hold'em Poker",
-    badge: '52',
+    titleKey: 'game.regular.title',
+    subtitleKey: 'game.regular.subtitle',
+    badgeKey: 'game.regular.badge',
     pageBg: 'radial-gradient(ellipse at center, #132651 0%, #050814 100%)',
     cardBg: 'bg-sky-950/30 border-sky-300/30',
     activePill: 'bg-sky-300 text-[#08152f] border-sky-200',
   },
   omaha: {
-    title: '奥马哈',
-    subtitle: "Pot-Limit Omaha Style",
-    badge: 'OMAHA',
+    titleKey: 'game.omaha.title',
+    subtitleKey: 'game.omaha.subtitle',
+    badgeKey: 'game.omaha.badge',
     pageBg: 'radial-gradient(ellipse at center, #4f2a11 0%, #140903 100%)',
     cardBg: 'bg-amber-950/20 border-amber-200/30',
     activePill: 'bg-amber-200 text-amber-950 border-amber-100',
   },
   crazy_pineapple: {
-    title: '疯狂大菠萝',
-    subtitle: "Hold'em with Flop Discard",
-    badge: 'PINE',
+    titleKey: 'game.crazy_pineapple.title',
+    subtitleKey: 'game.crazy_pineapple.subtitle',
+    badgeKey: 'game.crazy_pineapple.badge',
     pageBg: 'radial-gradient(ellipse at center, #3f0f2f 0%, #14060f 100%)',
     cardBg: 'bg-fuchsia-950/20 border-fuchsia-200/30',
     activePill: 'bg-fuchsia-200 text-fuchsia-950 border-fuchsia-100',
@@ -66,6 +67,7 @@ const GAME_THEME: Record<GameType, {
 };
 
 export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRoomId }: LobbyProps) {
+  const { t } = useI18n();
   const [playerName, setPlayerName] = useState('');
   const [joinCode, setJoinCode] = useState(initialRoomId || '');
   const [gameType, setGameType] = useState<GameType>('regular');
@@ -77,7 +79,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
   const [showModeInfo, setShowModeInfo] = useState(false);
 
   async function handleCreate() {
-    if (!playerName.trim()) { setError('请输入昵称'); return; }
+    if (!playerName.trim()) { setError(t('lobby.error.name_required')); return; }
     setLoading(true); setError('');
     const blind = BLIND_OPTIONS[blindIdx];
     const res = await onCreateRoom(playerName.trim(), {
@@ -87,19 +89,27 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
       bigBlind: blind.big,
     });
     setLoading(false);
-    if (!res.success) setError(res.error || '创建失败');
+    if (!res.success) setError(res.error || t('lobby.error.create_failed'));
   }
 
   async function handleJoin() {
-    if (!playerName.trim()) { setError('请输入昵称'); return; }
-    if (!joinCode.trim()) { setError('请输入房间码'); return; }
+    if (!playerName.trim()) { setError(t('lobby.error.name_required')); return; }
+    if (!joinCode.trim()) { setError(t('lobby.error.room_required')); return; }
     setLoading(true); setError('');
     const res = await onJoinRoom(joinCode.trim().toUpperCase(), playerName.trim());
     setLoading(false);
-    if (!res.success) setError(res.error || '加入失败');
+    if (!res.success) setError(res.error || t('lobby.error.join_failed'));
   }
 
   const theme = GAME_THEME[gameType];
+  const modeInfoKey =
+    gameType === 'short_deck'
+      ? 'game.short_deck.info'
+      : gameType === 'regular'
+        ? 'game.regular.info'
+        : gameType === 'omaha'
+          ? 'game.omaha.info'
+          : 'game.crazy_pineapple.info';
 
   return (
     <div
@@ -111,14 +121,14 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
         <h1 className="font-display text-[4.5rem] md:text-[7rem] text-gold tracking-[6px] leading-none"
           style={{ textShadow: '0 0 40px rgba(212,168,71,0.4), 3px 3px 0 #8b6914' }}
         >
-          {theme.title}
+          {t(theme.titleKey)}
         </h1>
-        <p className="text-white/40 tracking-[6px] text-xs uppercase mt-2">{theme.subtitle}</p>
+        <p className="text-white/40 tracking-[6px] text-xs uppercase mt-2">{t(theme.subtitleKey)}</p>
 
         {/* Connection status */}
         <div className="flex items-center justify-center gap-1.5 mt-3">
           <div className={clsx('w-2 h-2 rounded-full', isConnected ? 'bg-green-400' : 'bg-red-400')} />
-          <span className="text-xs text-white/30">{isConnected ? '已连接' : '连接中...'}</span>
+          <span className="text-xs text-white/30">{isConnected ? t('lobby.status.connected') : t('lobby.status.connecting')}</span>
         </div>
       </div>
 
@@ -126,12 +136,12 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
       <div className={clsx('w-full max-w-md border rounded-2xl p-6 backdrop-blur-sm transition-all', theme.cardBg)}>
         {/* Name input */}
         <div className="mb-5">
-          <label className="text-xs text-white/40 uppercase tracking-widest block mb-2">你的昵称</label>
+          <label className="text-xs text-white/40 uppercase tracking-widest block mb-2">{t('lobby.nickname.label')}</label>
           <input
             type="text"
             value={playerName}
             onChange={(e) => setPlayerName(e.target.value)}
-            placeholder="输入昵称..."
+            placeholder={t('lobby.nickname.placeholder')}
             maxLength={12}
             onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
             className="w-full bg-black/30 border border-gold/20 rounded-xl px-4 py-3 text-white placeholder:text-white/20 focus:outline-none focus:border-gold transition-colors"
@@ -142,25 +152,19 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
         <div className="mb-3">
           <div className="mb-3">
             <div className="mb-2 flex items-center justify-between">
-              <label className="text-xs text-white/40 uppercase tracking-widest block">游戏模式</label>
+              <label className="text-xs text-white/40 uppercase tracking-widest block">{t('lobby.mode.label')}</label>
               <button
                 type="button"
                 onClick={() => setShowModeInfo((v) => !v)}
                 className="w-5 h-5 rounded-full border border-white/35 text-white/70 text-xs font-bold leading-none hover:bg-white/10"
-                aria-label="Game mode info"
+                aria-label={t('lobby.mode.info_aria')}
               >
                 i
               </button>
             </div>
             {showModeInfo && (
               <div className="mb-2 rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-xs text-white/75">
-                {gameType === 'short_deck'
-                  ? '短牌：把牌堆里的 2–5全部移除，只用6到A共36张牌，同花大于葫芦，A-6-7-8-9算最小顺子'
-                  : gameType === 'regular'
-                    ? "德州扑克：标准 52 张牌规则."
-                    : gameType === 'omaha'
-                      ? '奥马哈：每个玩家发 4张手牌，最终必须 用其中恰好2张手牌 + 3张公共牌 组成最佳五张牌。'
-                      : '疯狂大菠萝：每人先发 3 张手牌，翻牌后必须弃 1 张。'}
+                {t(modeInfoKey)}
               </div>
             )}
             <div className="grid grid-cols-2 gap-2">
@@ -171,7 +175,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                   gameType === 'regular' ? GAME_THEME.regular.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
                 )}
               >
-                德州扑克
+                {t('game.regular.pill')}
               </button>
               <button
                 onClick={() => setGameType('short_deck')}
@@ -180,7 +184,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                   gameType === 'short_deck' ? GAME_THEME.short_deck.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
                 )}
               >
-                短牌
+                {t('game.short_deck.pill')}
               </button>
               {/* <button
                 onClick={() => setGameType('omaha')}
@@ -207,13 +211,13 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
             onClick={() => setShowCreateSettings(!showCreateSettings)}
             className="text-xs text-white/40 hover:text-gold mb-2 flex items-center gap-1 transition-colors"
           >
-            ⚙️ 游戏设置 {showCreateSettings ? '▲' : '▼'}
+            ⚙️ {t('lobby.settings.toggle')} {showCreateSettings ? '▲' : '▼'}
           </button>
 
           {showCreateSettings && (
             <div className="bg-black/20 rounded-xl p-4 mb-3 border border-white/5 space-y-3">
               <div>
-                <label className="text-xs text-white/40 block mb-2">初始筹码</label>
+                <label className="text-xs text-white/40 block mb-2">{t('lobby.settings.starting_chips')}</label>
                 <div className="flex gap-2 flex-wrap">
                   {STARTING_CHIPS_OPTIONS.map(opt => (
                     <button
@@ -232,7 +236,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                 </div>
               </div>
               <div>
-                <label className="text-xs text-white/40 block mb-2">盲注</label>
+                <label className="text-xs text-white/40 block mb-2">{t('lobby.settings.blinds')}</label>
                 <div className="flex gap-2 flex-wrap">
                   {BLIND_OPTIONS.map((opt, i) => (
                     <button
@@ -263,7 +267,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
               (loading || !isConnected) && 'opacity-50 cursor-not-allowed'
             )}
           >
-            {loading ? '...' : '🎴 创建房间'}
+            {loading ? '...' : t('lobby.create')}
           </button>
         </div>
 
@@ -272,7 +276,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
             <div className="w-full border-t border-white/10" />
           </div>
           <div className="relative flex justify-center">
-            <span className="bg-transparent text-white/30 text-xs px-2">或者加入房间</span>
+            <span className="bg-transparent text-white/30 text-xs px-2">{t('lobby.join.divider')}</span>
           </div>
         </div>
 
@@ -282,7 +286,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
             type="text"
             value={joinCode}
             onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-            placeholder="输入房间码"
+            placeholder={t('lobby.join.placeholder')}
             maxLength={6}
             onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
             className="flex-1 bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white placeholder:text-white/20 focus:outline-none focus:border-gold transition-colors uppercase tracking-widest font-display text-lg"
@@ -296,7 +300,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
               (loading || !isConnected) && 'opacity-50 cursor-not-allowed'
             )}
           >
-            加入
+            {t('lobby.join')}
           </button>
         </div>
 

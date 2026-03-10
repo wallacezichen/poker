@@ -7,35 +7,37 @@ import WaitingRoom from '../../../components/WaitingRoom';
 import GameTable from '../../../components/GameTable';
 import { clearRoomIdentity, getRoomIdentity } from '../../../lib/playerSession';
 import { GameType } from '../../../types/poker';
+import { useI18n } from '../../../i18n/LanguageProvider';
 
-const GAME_THEME: Record<GameType, { bg: string; panel: string; badge: string; label: string }> = {
+const GAME_THEME: Record<GameType, { bg: string; panel: string; badge: string; labelKey: string }> = {
   short_deck: {
     bg: 'radial-gradient(ellipse at center, #1a4a2e 0%, #061510 100%)',
     panel: 'bg-white/5 border border-gold/20',
     badge: 'bg-gradient-to-r from-gold-dark to-gold text-black',
-    label: '短牌德州',
+    labelKey: 'game.short_deck.pill',
   },
   regular: {
     bg: 'radial-gradient(ellipse at center, #132651 0%, #070c1a 100%)',
     panel: 'bg-sky-950/25 border border-sky-300/30',
     badge: 'bg-gradient-to-r from-sky-200 to-cyan-100 text-sky-900',
-    label: '德州扑克',
+    labelKey: 'game.regular.pill',
   },
   omaha: {
     bg: 'radial-gradient(ellipse at center, #4f2a11 0%, #140903 100%)',
     panel: 'bg-amber-950/20 border border-amber-200/30',
     badge: 'bg-gradient-to-r from-amber-200 to-yellow-100 text-amber-900',
-    label: '奥马哈',
+    labelKey: 'game.omaha.pill',
   },
   crazy_pineapple: {
     bg: 'radial-gradient(ellipse at center, #3f0f2f 0%, #14060f 100%)',
     panel: 'bg-fuchsia-950/20 border border-fuchsia-200/30',
     badge: 'bg-gradient-to-r from-fuchsia-200 to-pink-100 text-fuchsia-900',
-    label: 'Crazy Pineapple',
+    labelKey: 'game.crazy_pineapple.title',
   },
 };
 
 export default function RoomPage() {
+  const { t } = useI18n();
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -123,7 +125,7 @@ export default function RoomPage() {
     const res = await joinRoom(roomId, tempName.trim());
     setJoining(false);
     if (!res.success) {
-      alert(res.error || '加入失败');
+      alert(res.error || t('lobby.error.join_failed'));
       router.push('/');
     } else {
       setNeedsName(false);
@@ -147,17 +149,17 @@ export default function RoomPage() {
 
   async function handleSetAway(away: boolean) {
     const res = await setAway(away);
-    if (!res.success) alert(res.error || '状态更新失败');
+    if (!res.success) alert(res.error || t('room.error.state_update_failed'));
   }
 
   async function handleSetPause(paused: boolean) {
     const res = await setPause(paused);
-    if (!res.success) alert(res.error || '暂停状态更新失败');
+    if (!res.success) alert(res.error || t('room.error.pause_update_failed'));
   }
 
   async function handleJoinRequestDecision(requestId: string, approve: boolean, buyIn?: number) {
     const res = await decideJoinRequest(requestId, approve, buyIn);
-    if (!res.success) alert(res.error || '审批失败');
+    if (!res.success) alert(res.error || t('room.error.approval_failed'));
   }
 
   async function handleHostManagePlayer(targetPlayerId: string, action: 'set_chips' | 'kick', chips?: number) {
@@ -171,17 +173,17 @@ export default function RoomPage() {
 
   async function handleRevealCards(count: 1 | 2) {
     const res = await revealCards(count);
-    if (!res.success) alert(res.error || 'Reveal failed');
+    if (!res.success) alert(res.error || t('room.error.reveal_failed'));
   }
 
   async function handleRunItTwiceVote(agree: boolean) {
     const res = await voteRunItTwice(agree);
-    if (!res.success) alert(res.error || 'Vote failed');
+    if (!res.success) alert(res.error || t('room.error.vote_failed'));
   }
 
   async function handleRevealDeadBoard() {
     const res = await revealDeadBoard();
-    if (!res.success) alert(res.error || 'Reveal failed');
+    if (!res.success) alert(res.error || t('room.error.reveal_failed'));
   }
 
   function handleEndSession(rows: Array<{ id: string; name: string; buyIn: number; buyOut: number; net: number }>) {
@@ -211,23 +213,23 @@ export default function RoomPage() {
     if (!rebuyPrompt) return;
     const amount = Math.max(rebuyPrompt.minBuyIn, Math.floor(Number(rebuyAmount) || 0));
     if (amount < rebuyPrompt.minBuyIn) {
-      alert(`Minimum buy-in is ${rebuyPrompt.minBuyIn}`);
+      alert(t('rebuy.error.minimum', { min: rebuyPrompt.minBuyIn }));
       return;
     }
     setRebuySubmitting(true);
     const res = await respondRebuy(true, amount);
     setRebuySubmitting(false);
-    if (!res.success) return alert(res.error || 'Re-buy failed');
+    if (!res.success) return alert(res.error || t('rebuy.error.failed'));
     setRebuyPrompt(null);
   }
 
   async function handleDeclineRebuy() {
     if (!rebuyPrompt) return;
-    if (!confirm('Decline re-buy and leave this room?')) return;
+    if (!confirm(t('rebuy.decline_confirm'))) return;
     setRebuySubmitting(true);
     const res = await respondRebuy(false);
     setRebuySubmitting(false);
-    if (!res.success) return alert(res.error || 'Action failed');
+    if (!res.success) return alert(res.error || t('rebuy.error.action_failed'));
     setRebuyPrompt(null);
     router.push('/');
   }
@@ -238,8 +240,8 @@ export default function RoomPage() {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>
         <div className="text-center">
-          <div className="font-display text-gold text-3xl tracking-widest mb-2">连接中...</div>
-          <div className="text-white/30 text-sm">正在连接到服务器</div>
+          <div className="font-display text-gold text-3xl tracking-widest mb-2">{t('room.connecting.title')}</div>
+          <div className="text-white/30 text-sm">{t('room.connecting.subtitle')}</div>
         </div>
       </div>
     );
@@ -250,7 +252,7 @@ export default function RoomPage() {
     const theme = GAME_THEME[roomPreviewGameType];
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>
-        <div className="text-white/50">恢复玩家身份中...</div>
+        <div className="text-white/50">{t('room.resuming')}</div>
       </div>
     );
   }
@@ -265,10 +267,10 @@ export default function RoomPage() {
       >
         <div className={`w-full max-w-sm rounded-2xl p-8 text-center ${theme.panel}`}>
           <span className={`inline-block text-xs font-bold px-3 py-1 rounded-full mb-3 ${theme.badge}`}>
-            {theme.label}
+            {t(theme.labelKey)}
           </span>
-          <div className="font-display text-4xl text-gold tracking-widest mb-2">加入房间</div>
-          <div className="text-white/40 text-sm mb-6">房间码: <span className="text-gold font-display text-lg">{roomId}</span></div>
+          <div className="font-display text-4xl text-gold tracking-widest mb-2">{t('room.join.title')}</div>
+          <div className="text-white/40 text-sm mb-6">{t('room.join.code_label')}: <span className="text-gold font-display text-lg">{roomId}</span></div>
 
           <div className="mb-4">
             <input
@@ -276,7 +278,7 @@ export default function RoomPage() {
               value={tempName}
               onChange={(e) => setTempName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleDirectJoin()}
-              placeholder="输入你的昵称..."
+              placeholder={t('room.join.placeholder')}
               maxLength={12}
               className="w-full bg-black/30 border border-gold/20 rounded-xl px-4 py-3 text-white placeholder:text-white/20 focus:outline-none focus:border-gold transition-colors text-center"
               autoFocus
@@ -288,14 +290,14 @@ export default function RoomPage() {
             disabled={joining || !tempName.trim()}
             className="w-full py-3 rounded-xl bg-gradient-to-r from-gold-dark to-gold text-black font-display text-xl tracking-widest hover:brightness-110 transition-all disabled:opacity-50"
           >
-            {joining ? '加入中...' : '加入游戏'}
+            {joining ? t('room.join.button_joining') : t('room.join.button')}
           </button>
 
           <button
             onClick={() => router.push('/')}
             className="mt-3 text-white/30 hover:text-white/60 text-sm w-full transition-colors"
           >
-            返回首页
+            {t('room.go_home')}
           </button>
         </div>
       </div>
@@ -309,10 +311,10 @@ export default function RoomPage() {
         <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>
           <div className="w-full max-w-md bg-black/35 border border-white/20 rounded-xl p-6 text-center text-white">
             <div className="text-2xl font-semibold mb-2">
-              {joinPending.status === 'pending' ? '等待房主审批加入请求' : '加入请求被拒绝'}
+              {joinPending.status === 'pending' ? t('room.pending.title') : t('room.denied.title')}
             </div>
             <div className="text-white/65 text-sm mb-6">
-              房间: {roomId}
+              {t('room.pending.room', { roomId })}
               {joinPending.error ? ` · ${joinPending.error}` : ''}
             </div>
             <div className="flex items-center justify-center gap-3">
@@ -324,7 +326,7 @@ export default function RoomPage() {
                   }}
                   className="px-4 py-2 rounded-lg bg-white/20 hover:bg-white/30"
                 >
-                  重新申请
+                  {t('room.reapply')}
                 </button>
               )}
               <button
@@ -334,7 +336,7 @@ export default function RoomPage() {
                 }}
                 className="px-4 py-2 rounded-lg bg-white/15 hover:bg-white/25"
               >
-                返回首页
+                {t('room.go_home')}
               </button>
             </div>
           </div>
@@ -344,7 +346,7 @@ export default function RoomPage() {
 
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: '#061510' }}>
-        <div className="text-white/30">加载房间中...</div>
+        <div className="text-white/30">{t('room.loading')}</div>
       </div>
     );
   }
@@ -386,12 +388,10 @@ export default function RoomPage() {
       {rebuyPrompt && (
         <div className="absolute inset-0 z-[90] flex items-center justify-center bg-black/65 p-4">
           <div className="w-full max-w-md rounded-xl border border-white/25 bg-[#10151f] p-5 text-white shadow-[0_20px_48px_rgba(0,0,0,0.5)]">
-            <div className="text-lg font-bold">You are out of chips</div>
-            <div className="mt-2 text-sm text-white/75">
-              Buy back in to continue this room.
-            </div>
+            <div className="text-lg font-bold">{t('rebuy.title')}</div>
+            <div className="mt-2 text-sm text-white/75">{t('rebuy.subtitle')}</div>
             <div className="mt-4">
-              <div className="mb-1 text-xs uppercase tracking-wide text-white/50">Buy-in Amount</div>
+              <div className="mb-1 text-xs uppercase tracking-wide text-white/50">{t('rebuy.amount')}</div>
               <input
                 type="number"
                 min={rebuyPrompt.minBuyIn}
@@ -400,7 +400,7 @@ export default function RoomPage() {
                 onChange={(e) => setRebuyAmount(e.target.value)}
                 className="w-full rounded border border-white/25 bg-black/35 px-3 py-2 text-white outline-none focus:border-emerald-400"
               />
-              <div className="mt-1 text-xs text-white/55">Minimum: {rebuyPrompt.minBuyIn}</div>
+              <div className="mt-1 text-xs text-white/55">{t('rebuy.minimum', { min: rebuyPrompt.minBuyIn })}</div>
             </div>
             <div className="mt-5 flex items-center gap-2">
               <button
@@ -408,14 +408,14 @@ export default function RoomPage() {
                 onClick={handleConfirmRebuy}
                 className="flex-1 rounded bg-emerald-600 px-3 py-2 font-semibold hover:bg-emerald-500 disabled:opacity-50"
               >
-                {rebuySubmitting ? 'Processing...' : 'Re-buy In'}
+                {rebuySubmitting ? t('rebuy.processing') : t('rebuy.confirm')}
               </button>
               <button
                 disabled={rebuySubmitting}
                 onClick={handleDeclineRebuy}
                 className="flex-1 rounded bg-rose-700 px-3 py-2 font-semibold hover:bg-rose-600 disabled:opacity-50"
               >
-                Decline & Leave
+                {t('rebuy.decline')}
               </button>
             </div>
           </div>

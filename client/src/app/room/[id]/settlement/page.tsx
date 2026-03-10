@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import clsx from 'clsx';
+import { useI18n } from '../../../../i18n/LanguageProvider';
 
 interface LedgerRow {
   id: string;
@@ -16,6 +17,7 @@ function formatChips(n: number): string {
 }
 
 export default function SettlementPage() {
+  const { t } = useI18n();
   const params = useParams();
   const router = useRouter();
   const roomId = String(params?.id || '').toUpperCase();
@@ -36,12 +38,12 @@ export default function SettlementPage() {
   }, [roomId]);
 
   const modeLabel = gameType === 'regular'
-    ? "Texas Poker Hold'em"
+    ? t('game.regular.title')
     : gameType === 'omaha'
-      ? 'Omaha'
+      ? t('game.omaha.title')
       : gameType === 'crazy_pineapple'
-        ? 'Crazy Pineapple'
-        : 'Short Deck';
+        ? t('game.crazy_pineapple.title')
+        : t('game.short_deck.title');
 
   return (
     <div
@@ -52,22 +54,22 @@ export default function SettlementPage() {
         onClick={() => router.push('/')}
         className="absolute left-4 top-4 px-5 py-2 rounded-lg border border-emerald-300/40 bg-emerald-900/30 hover:bg-emerald-800/40 text-emerald-100 font-semibold"
       >
-        Create New Room
+        {t('settlement.create_new_room')}
       </button>
       <div className="w-[860px] max-w-[96vw] rounded-xl border border-white/20 bg-[#141821] p-5 shadow-[0_20px_45px_rgba(0,0,0,0.5)]">
         <div className="text-center">
-          <div className="text-2xl font-bold">Session Ledger</div>
-          <div className="mt-1 text-white/70 text-sm">Room {roomId} · {modeLabel}</div>
+          <div className="text-2xl font-bold">{t('ledger.title')}</div>
+          <div className="mt-1 text-white/70 text-sm">{t('settlement.room_mode', { roomId, modeLabel })}</div>
         </div>
 
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="text-white/70 border-b border-white/15">
-                <th className="text-left py-2 pr-3">Player</th>
-                <th className="text-right py-2 pr-3">Buy-in</th>
-                <th className="text-right py-2 pr-3">Buy-out</th>
-                <th className="text-right py-2">Net</th>
+                <th className="text-left py-2 pr-3">{t('ledger.player')}</th>
+                <th className="text-right py-2 pr-3">{t('ledger.buy_in')}</th>
+                <th className="text-right py-2 pr-3">{t('ledger.buy_out')}</th>
+                <th className="text-right py-2">{t('ledger.net')}</th>
               </tr>
             </thead>
             <tbody>
@@ -83,7 +85,7 @@ export default function SettlementPage() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="py-4 text-center text-white/60">No ledger data found.</td>
+                  <td colSpan={4} className="py-4 text-center text-white/60">{t('settlement.no_data')}</td>
                 </tr>
               )}
             </tbody>

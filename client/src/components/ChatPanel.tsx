@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChatMessage } from '../types/poker';
 import clsx from 'clsx';
+import { useI18n } from '../i18n/LanguageProvider';
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -13,6 +14,7 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({ messages, myPlayerId, onSend, isOpen, onToggle, unreadCount = 0 }: ChatPanelProps) {
+  const { t } = useI18n();
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -39,14 +41,14 @@ export default function ChatPanel({ messages, myPlayerId, onSend, isOpen, onTogg
       >
         {/* Header */}
         <div className="px-3 py-2 border-b border-gold/10 flex items-center justify-between">
-          <span className="text-xs text-white/50 uppercase tracking-widest">游戏聊天</span>
+          <span className="text-xs text-white/50 uppercase tracking-widest">{t('chat.title')}</span>
           <button onClick={onToggle} className="text-white/30 hover:text-white/70 text-sm">✕</button>
         </div>
 
         {/* Messages */}
         <div className="h-52 overflow-y-auto px-3 py-2 space-y-1.5">
           {messages.length === 0 && (
-            <p className="text-xs text-white/30 text-center mt-8">还没有消息</p>
+            <p className="text-xs text-white/30 text-center mt-8">{t('chat.empty')}</p>
           )}
           {messages.map((msg) => (
             <div key={msg.id} className={clsx('text-sm', msg.playerId === myPlayerId && 'text-right')}>
@@ -73,7 +75,7 @@ export default function ChatPanel({ messages, myPlayerId, onSend, isOpen, onTogg
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="发送消息..."
+            placeholder={t('chat.placeholder')}
             maxLength={200}
             className="flex-1 bg-transparent text-white text-sm placeholder:text-white/30 outline-none"
           />
@@ -81,7 +83,7 @@ export default function ChatPanel({ messages, myPlayerId, onSend, isOpen, onTogg
             onClick={handleSend}
             className="bg-gold/80 hover:bg-gold text-black text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
           >
-            发
+            {t('chat.send')}
           </button>
         </div>
       </div>

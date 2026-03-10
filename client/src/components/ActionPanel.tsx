@@ -2,6 +2,7 @@
 import { useState, useCallback } from 'react';
 import { GameState, ActionType, PlayerState } from '../types/poker';
 import clsx from 'clsx';
+import { useI18n } from '../i18n/LanguageProvider';
 
 interface ActionPanelProps {
   gameState: GameState;
@@ -15,6 +16,7 @@ function formatChips(n: number): string {
 }
 
 export default function ActionPanel({ gameState, myPlayer, onAction, timerSeconds }: ActionPanelProps) {
+  const { t } = useI18n();
   const [raiseAmount, setRaiseAmount] = useState<number>(0);
 
   const canCheck = gameState.currentBet <= myPlayer.bet;
@@ -38,7 +40,7 @@ export default function ActionPanel({ gameState, myPlayer, onAction, timerSecond
     <div className="flex flex-col gap-2">
       {/* Timer bar */}
       <div className="flex items-center gap-2">
-        <span className="text-xs text-white/55">Time</span>
+        <span className="text-xs text-white/55">{t('action.time')}</span>
         <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-1000 ease-linear"
@@ -69,7 +71,7 @@ export default function ActionPanel({ gameState, myPlayer, onAction, timerSecond
             'active:scale-95'
           )}
         >
-          弃牌
+          {t('action.fold')}
         </button>
 
         {/* Check or Call */}
@@ -82,7 +84,7 @@ export default function ActionPanel({ gameState, myPlayer, onAction, timerSecond
               'active:scale-95'
             )}
           >
-            过牌
+            {t('action.check')}
           </button>
         ) : (
           <button
@@ -93,7 +95,7 @@ export default function ActionPanel({ gameState, myPlayer, onAction, timerSecond
               'active:scale-95'
             )}
           >
-            跟注 {formatChips(callAmt)}
+            {t('action.call', { amount: formatChips(callAmt) })}
           </button>
         )}
 
@@ -133,8 +135,8 @@ export default function ActionPanel({ gameState, myPlayer, onAction, timerSecond
             {/* Preset buttons */}
             <div className="flex flex-col gap-1">
               {[
-                { label: '1/2锅', val: Math.floor(gameState.pot / 2) },
-                { label: '全锅', val: gameState.pot },
+                { label: t('action.preset.half_pot'), val: Math.floor(gameState.pot / 2) },
+                { label: t('action.preset.pot'), val: gameState.pot },
               ].map(({ label, val }) => {
                 const clamped = Math.min(Math.max(val, minRaise), maxRaise);
                 return (
@@ -157,7 +159,7 @@ export default function ActionPanel({ gameState, myPlayer, onAction, timerSecond
                 'active:scale-95'
               )}
             >
-              加注
+              {t('action.raise')}
             </button>
           </div>
         )}
@@ -171,7 +173,7 @@ export default function ActionPanel({ gameState, myPlayer, onAction, timerSecond
             'active:scale-95'
           )}
         >
-          全押 {formatChips(myPlayer.chips)}
+          {t('action.allin', { amount: formatChips(myPlayer.chips) })}
         </button>
       </div>
     </div>

@@ -2,6 +2,7 @@
 import { Card as CardType, GameType, PlayerState, Rank } from '../types/poker';
 import Card from './Card';
 import clsx from 'clsx';
+import { useI18n } from '../i18n/LanguageProvider';
 
 interface PlayerSeatProps {
   player: PlayerState;
@@ -37,6 +38,7 @@ export default function PlayerSeat({
   player, isDealer, isSmallBlind, isBigBlind,
   isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false, autoPostAmount, autoPostActive = false, gameType = 'short_deck',
 }: PlayerSeatProps) {
+  const { t } = useI18n();
   const expectedHoleCount = gameType === 'omaha' ? 4 : 2;
   const showCards = isMe || (player.holeCards?.length ?? 0) > 0;
   const mask = player.revealedMask ?? 0;
@@ -157,11 +159,11 @@ export default function PlayerSeat({
               className="absolute -top-12 left-1/2 -translate-x-1/2 rounded-full px-4 h-11 border border-slate-300/45 bg-[#2a2e35] text-white text-[0.8rem] font-bold tracking-[0.06em] flex items-center justify-center shadow-[0_10px_24px_rgba(0,0,0,0.52)]"
               style={{ fontFamily: 'Arial, sans-serif' }}
             >
-              Check
+              {t('action.check')}
             </div>
           )}
-          {player.allIn && <div className="text-sm text-rose-500 font-bold mt-1">ALL-IN</div>}
-          {!player.isConnected && <div className="text-sm text-rose-500 font-bold mt-1">DISCONNECTED</div>}
+          {player.allIn && <div className="text-sm text-rose-500 font-bold mt-1">{t('seat.all_in')}</div>}
+          {!player.isConnected && <div className="text-sm text-rose-500 font-bold mt-1">{t('seat.disconnected')}</div>}
           {rebuyCount > 0 && (
             <div className="absolute bottom-1 right-2 text-[0.95rem] font-extrabold leading-none text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">
               🔁{rebuyCount >= 2 ? rebuyCount : ''}

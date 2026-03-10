@@ -6,6 +6,8 @@ import PlayerSeat from './PlayerSeat';
 import { useGameStore } from '../store/gameStore';
 import clsx from 'clsx';
 import { getSoundSettings, playBetSound, playCheckSound, playFlopSound, playRiverSound, playTurnSound, setSoundSettings } from '../lib/soundEffects';
+import { useI18n } from '../i18n/LanguageProvider';
+import { useChrome } from '../ui/ChromeProvider';
 
 // Seat positions as percentage [top, left] on the oval table
 // Position 0 = bottom center (always my seat), others go clockwise
@@ -106,10 +108,17 @@ export default function GameTable({
   gameState, room, myPlayerId,
   onAction, onSendChat, onSetAway, onJoinRequestDecision, onHostManagePlayer, onUpdateRoomSettings, onSetPause, onNextHand, onRevealCards, onRevealDeadBoard, onRunItTwiceVote, onEndSession, onLeave
 }: GameTableProps) {
+  const { t, locale, setLocale } = useI18n();
+  const { setInGame } = useChrome();
   const {
     chatMessages, joinRequests,
     handResult, showHandResult, setShowHandResult, setHandResult, isGamePaused, rebuyCountByPlayerId,
   } = useGameStore();
+
+  useEffect(() => {
+    setInGame(true);
+    return () => setInGame(false);
+  }, [setInGame]);
 
   const [raiseAmount, setRaiseAmount] = useState(0);
   const [chatInput, setChatInput] = useState('');
@@ -218,12 +227,12 @@ export default function GameTable({
   const recentChat = chatMessages.slice(-3);
   const ownerName = room.players.find(p => p.id === room.hostId)?.name || 'HOST';
   const gameTypeLabel = room.settings.gameType === 'regular'
-    ? "Texas Poker Hold'em"
+    ? t('game.regular.title')
     : room.settings.gameType === 'omaha'
-      ? 'Omaha'
+      ? t('game.omaha.title')
       : room.settings.gameType === 'crazy_pineapple'
-        ? 'Crazy Pineapple'
-        : 'Short Deck';
+        ? t('game.crazy_pineapple.title')
+        : t('game.short_deck.title');
   const meInRoom = room.players.find(p => p.id === myPlayerId);
   const isAway = !!meInRoom?.isAway;
   const runItTwice = gameState.runItTwice;
@@ -763,25 +772,25 @@ export default function GameTable({
           onClick={onLeave}
           className="absolute left-3 top-3 z-30 w-[72px] h-[72px] rounded-lg border border-white/25 bg-black/55 hover:bg-black/70 text-white text-sm font-bold tracking-wide"
         >
-          Poker
+          {t('table.leave_short')}
         </button>
 
         <aside className="hidden md:flex absolute left-3 top-24 z-20 flex-col gap-2">
           <SquareTool
             icon="☰"
-            label="OPTIONS"
+            label={t('table.tools.options')}
             active={showOptionsModal}
             onClick={() => setShowOptionsModal(v => !v)}
           />
           <SquareTool
             icon="📘"
-            label="比大小"
+            label={t('table.rules.button')}
             active={showRulesModal}
             onClick={() => setShowRulesModal(v => !v)}
           />
           <SquareTool
             icon={isAway ? '↩' : '🧍'}
-            label={isAway ? 'I AM BACK' : 'AWAY'}
+            label={isAway ? t('table.tools.back') : t('table.tools.away')}
             active={isAway}
             onClick={() => onSetAway(!isAway)}
           />
@@ -789,20 +798,26 @@ export default function GameTable({
 
         <aside className="hidden md:flex absolute right-3 top-36 z-20 flex-col gap-2">
           <SquareTool
+            icon="🌐"
+            label={t('table.tools.lang')}
+            active={locale === 'zh'}
+            onClick={() => setLocale(locale === 'en' ? 'zh' : 'en')}
+          />
+          <SquareTool
             icon={soundMuted ? '🔇' : '🔊'}
-            label="SOUND"
+            label={t('table.tools.sound')}
             active={showSoundPanel}
             onClick={() => setShowSoundPanel(v => !v)}
           />
           <SquareTool
             icon={isGamePaused ? '▶' : '⏸'}
-            label="PAUSE"
+            label={t('table.tools.pause')}
             active={isGamePaused}
             onClick={() => onSetPause(!isGamePaused)}
           />
           <SquareTool
             icon={isHost ? '■' : '📊'}
-            label={isHost ? 'END SESSION' : 'SESSION LEDGER'}
+            label={isHost ? t('table.tools.end_session') : t('table.tools.session_ledger')}
             onClick={() => {
               setShowSessionLedger(true);
             }}
@@ -812,9 +827,9 @@ export default function GameTable({
 
         {showSoundPanel && (
           <div className="absolute top-3 right-24 z-30 w-[280px] rounded-lg border border-white/20 bg-black/80 p-3">
-            <div className="text-xs uppercase tracking-widest text-white/60">Sound</div>
+            <div className="text-xs uppercase tracking-widest text-white/60">{t('table.sound.title')}</div>
             <div className="mt-2 flex items-center justify-between">
-              <span className="text-sm text-white/90">Mute</span>
+              <span className="text-sm text-white/90">{t('table.sound.mute')}</span>
               <button
                 onClick={() => persistSoundSettings(!soundMuted, soundVolume)}
                 className={clsx(
@@ -822,12 +837,12 @@ export default function GameTable({
                   soundMuted ? 'bg-rose-700 hover:bg-rose-600' : 'bg-emerald-700 hover:bg-emerald-600'
                 )}
               >
-                {soundMuted ? 'On' : 'Off'}
+                {soundMuted ? t('table.sound.on') : t('table.sound.off')}
               </button>
             </div>
             <div className="mt-3">
               <div className="flex items-center justify-between text-sm text-white/80 mb-1">
-                <span>Volume</span>
+                <span>{t('table.sound.volume')}</span>
                 <span>{soundVolume}%</span>
               </div>
               <input
@@ -846,20 +861,20 @@ export default function GameTable({
           <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/45 p-4">
             <div className="w-[560px] max-w-[96vw] rounded-xl border border-white/20 bg-[#141821] p-4 shadow-[0_20px_45px_rgba(0,0,0,0.5)]">
               <div className="flex items-center justify-between">
-                <div className="text-lg font-bold">Options</div>
+                <div className="text-lg font-bold">{t('table.options.modal_title')}</div>
                 <button
                   onClick={() => setShowOptionsModal(false)}
                   className="px-2.5 py-1 rounded bg-white/15 hover:bg-white/25 text-sm"
                 >
-                  关闭
+                  {t('common.close')}
                 </button>
               </div>
 
               <div className="mt-4 rounded-lg border border-white/15 bg-white/5 p-3">
-                <div className="text-sm font-semibold text-white/90 mb-2">1. 修改大小盲</div>
+                <div className="text-sm font-semibold text-white/90 mb-2">{t('table.options.section.blinds')}</div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <div className="text-xs text-white/65 mb-1">Small Blind</div>
+                    <div className="text-xs text-white/65 mb-1">{t('table.options.small_blind')}</div>
                     <input
                       type="number"
                       min={1}
@@ -870,7 +885,7 @@ export default function GameTable({
                     />
                   </div>
                   <div>
-                    <div className="text-xs text-white/65 mb-1">Big Blind</div>
+                    <div className="text-xs text-white/65 mb-1">{t('table.options.big_blind')}</div>
                     <input
                       type="number"
                       min={1}
@@ -881,13 +896,13 @@ export default function GameTable({
                     />
                   </div>
                 </div>
-                <div className="mt-2 text-xs text-white/55">Current: {room.settings.smallBlind}/{room.settings.bigBlind}</div>
+                <div className="mt-2 text-xs text-white/55">{t('table.options.current_blinds', { sb: room.settings.smallBlind, bb: room.settings.bigBlind })}</div>
               </div>
 
               <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3">
-                <div className="text-sm font-semibold text-white/90 mb-2">2. 炸弹底池</div>
+                <div className="text-sm font-semibold text-white/90 mb-2">{t('table.options.section.bomb')}</div>
                 <div className="flex items-center justify-start gap-5">
-                  <span className="text-sm text-white/90">Enable Bomb Pot</span>
+                  <span className="text-sm text-white/90">{t('table.options.enable_bomb')}</span>
                   <button
                     disabled={!isHost}
                     onClick={() => isHost && setBombPotEnabledDraft(v => !v)}
@@ -908,7 +923,7 @@ export default function GameTable({
                 </div>
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   <div>
-                    <div className="text-xs text-white/65 mb-1">Bomb Amount</div>
+                    <div className="text-xs text-white/65 mb-1">{t('table.options.bomb_amount')}</div>
                     <input
                       type="number"
                       min={1}
@@ -919,7 +934,7 @@ export default function GameTable({
                     />
                   </div>
                   <div>
-                    <div className="text-xs text-white/65 mb-1">Every N Hands</div>
+                    <div className="text-xs text-white/65 mb-1">{t('table.options.bomb_interval')}</div>
                     <input
                       type="number"
                       min={1}
@@ -932,16 +947,16 @@ export default function GameTable({
                 </div>
                 <div className="mt-2 text-xs text-white/55">
                   {room.settings.bombPotEnabled
-                    ? `Current: ON · ${room.settings.bombPotAmount} chips · every ${room.settings.bombPotInterval} hands`
-                    : 'Current: OFF'}
+                    ? t('table.options.current_on_bomb', { amount: room.settings.bombPotAmount, interval: room.settings.bombPotInterval })
+                    : t('table.options.current_off')}
                 </div>
               </div>
 
               {isRegularGame && (
                 <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3">
-                  <div className="text-sm font-semibold text-white/90 mb-2">3. 27 Game</div>
+                  <div className="text-sm font-semibold text-white/90 mb-2">{t('table.options.section.twoseven')}</div>
                   <div className="flex items-center justify-start gap-5">
-                    <span className="text-sm text-white/90">Enable 27 Game</span>
+                    <span className="text-sm text-white/90">{t('table.options.enable_27')}</span>
                     <button
                       disabled={!isHost}
                       onClick={() => isHost && setTwoSevenEnabledDraft(v => !v)}
@@ -961,7 +976,7 @@ export default function GameTable({
                     </button>
                   </div>
                   <div className="mt-3">
-                    <div className="text-xs text-white/65 mb-1">Amount Per Other Player</div>
+                    <div className="text-xs text-white/65 mb-1">{t('table.options.amount_per_other')}</div>
                     <input
                       type="number"
                       min={1}
@@ -973,8 +988,8 @@ export default function GameTable({
                   </div>
                   <div className="mt-2 text-xs text-white/55">
                     {room.settings.twoSevenEnabled
-                      ? `Current: ON · ${room.settings.twoSevenAmount} per other player`
-                      : 'Current: OFF'}
+                      ? t('table.options.current_on_27', { amount: room.settings.twoSevenAmount })
+                      : t('table.options.current_off')}
                   </div>
                 </div>
               )}
@@ -987,48 +1002,48 @@ export default function GameTable({
                     const sbRaw = smallBlindDraft.trim();
                     const bbRaw = bigBlindDraft.trim();
                     if (!sbRaw || !bbRaw) {
-                      alert('小盲和大盲不能为空，请重新输入');
+                      alert(t('table.options.error.empty_blinds'));
                       return;
                     }
                     const sb = Number(sbRaw);
                     const bb = Number(bbRaw);
                     if (!Number.isInteger(sb) || !Number.isInteger(bb)) {
-                      alert('小盲和大盲必须是整数');
+                      alert(t('table.options.error.int_blinds'));
                       return;
                     }
                     if (sb <= 0 || bb <= 0) {
-                      alert('小盲和大盲必须大于 0');
+                      alert(t('table.options.error.pos_blinds'));
                       return;
                     }
                     if (bb <= sb) {
-                      alert('大盲必须大于小盲');
+                      alert(t('table.options.error.bb_gt_sb'));
                       return;
                     }
                     const bombAmtRaw = bombPotAmountDraft.trim();
                     const bombIntRaw = bombPotIntervalDraft.trim();
                     if (!bombAmtRaw || !bombIntRaw) {
-                      alert('Bomb Pot 金额和轮数不能为空，请重新输入');
+                      alert(t('table.options.error.empty_bomb'));
                       return;
                     }
                     const bombAmount = Number(bombAmtRaw);
                     const bombInterval = Number(bombIntRaw);
                     if (!Number.isInteger(bombAmount) || !Number.isInteger(bombInterval)) {
-                      alert('Bomb Pot 金额和轮数必须是整数');
+                      alert(t('table.options.error.int_bomb'));
                       return;
                     }
                     if (bombAmount <= 0 || bombInterval <= 0) {
-                      alert('Bomb Pot 金额和轮数必须大于 0');
+                      alert(t('table.options.error.pos_bomb'));
                       return;
                     }
                     const twoSevenRaw = twoSevenAmountDraft.trim();
                     const twoSevenAmount = Number(twoSevenRaw || room.settings.twoSevenAmount || 100);
                     if (isRegularGame) {
                       if (!twoSevenRaw) {
-                        alert('27 Game 金额不能为空，请重新输入');
+                        alert(t('table.options.error.empty_27'));
                         return;
                       }
                       if (!Number.isInteger(twoSevenAmount) || twoSevenAmount <= 0) {
-                        alert('27 Game 金额必须是大于 0 的整数');
+                        alert(t('table.options.error.posint_27'));
                         return;
                       }
                     }
@@ -1044,10 +1059,10 @@ export default function GameTable({
                     });
                     setSavingOptions(false);
                     if (!res.success) {
-                      showOptionsToast('error', res.error || '保存失败');
+                      showOptionsToast('error', res.error || t('table.options.save_failed'));
                       return;
                     }
-                    showOptionsToast('success', '保存设置成功');
+                    showOptionsToast('success', t('table.options.save_ok'));
                     setShowOptionsModal(false);
                   }}
                   className={clsx(
@@ -1057,7 +1072,7 @@ export default function GameTable({
                       : 'border-emerald-300/40 bg-emerald-900/35 hover:bg-emerald-800/45 text-emerald-100'
                   )}
                 >
-                  {savingOptions ? 'Saving...' : '保存'}
+                  {savingOptions ? t('common.saving') : t('common.save')}
                 </button>
               </div>
             </div>
@@ -1086,13 +1101,13 @@ export default function GameTable({
         {showSessionLedger && (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
             <div className="w-[760px] max-w-[96vw] rounded-xl border border-white/20 bg-[#141821] text-white p-4 shadow-[0_20px_45px_rgba(0,0,0,0.5)]">
-              <div className="flex items-center justify-between">
-                <div className="text-xl font-bold">Session Ledger</div>
+                <div className="flex items-center justify-between">
+                <div className="text-xl font-bold">{t('ledger.title')}</div>
                 <button
                   onClick={() => setShowSessionLedger(false)}
                   className="px-2.5 py-1 rounded bg-white/15 hover:bg-white/25 text-sm"
                 >
-                  Close
+                  {t('common.close')}
                 </button>
               </div>
 
@@ -1100,10 +1115,10 @@ export default function GameTable({
                 <table className="w-full text-sm border-collapse">
                   <thead>
                     <tr className="text-white/70 border-b border-white/15">
-                      <th className="text-left py-2 pr-3">Player</th>
-                      <th className="text-right py-2 pr-3">Buy-in</th>
-                      <th className="text-right py-2 pr-3">Buy-out</th>
-                      <th className="text-right py-2">Net</th>
+                      <th className="text-left py-2 pr-3">{t('ledger.player')}</th>
+                      <th className="text-right py-2 pr-3">{t('ledger.buy_in')}</th>
+                      <th className="text-right py-2 pr-3">{t('ledger.buy_out')}</th>
+                      <th className="text-right py-2">{t('ledger.net')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1126,7 +1141,7 @@ export default function GameTable({
                   onClick={() => setShowSessionLedger(false)}
                   className="px-4 py-2 rounded-lg border border-white/25 bg-white/10 hover:bg-white/15 text-sm"
                 >
-                  Continue Playing
+                  {t('ledger.continue_playing')}
                 </button>
                 {isHost && (
                   <button
@@ -1136,7 +1151,7 @@ export default function GameTable({
                     }}
                     className="px-4 py-2 rounded-lg border border-rose-300/40 bg-rose-900/35 hover:bg-rose-800/45 text-rose-100 text-sm font-semibold"
                   >
-                    End Session
+                    {t('table.tools.end_session')}
                   </button>
                 )}
               </div>
@@ -1144,11 +1159,11 @@ export default function GameTable({
           </div>
         )}
 
-        {isHost && manageTarget && (
-          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/35">
-            <div className="w-[360px] rounded-xl border border-white/20 bg-black/85 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
-              <div className="text-xs uppercase tracking-widest text-white/60">Player Control</div>
-              <div className="mt-1 text-lg font-semibold text-white">{manageTarget.name}</div>
+	        {isHost && manageTarget && (
+	          <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/35">
+	            <div className="w-[360px] rounded-xl border border-white/20 bg-black/85 p-4 shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
+	              <div className="text-xs uppercase tracking-widest text-white/60">{t('table.manage.title')}</div>
+	              <div className="mt-1 text-lg font-semibold text-white">{manageTarget.name}</div>
               <div className="mt-3 flex items-center gap-2">
                 <input
                   type="number"
@@ -1173,30 +1188,30 @@ export default function GameTable({
                   }}
                   className="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-sm font-semibold disabled:opacity-50"
                 >
-                  {managing ? 'Saving...' : 'Set Chips'}
+                  {managing ? t('common.saving') : t('table.manage.set_chips')}
                 </button>
               </div>
               <div className="mt-3 flex items-center gap-2">
                 <button
                   disabled={managing}
                   onClick={async () => {
-                    if (!confirm(`Kick ${manageTarget.name}?`)) return;
+                    if (!confirm(t('table.manage.kick_confirm', { name: manageTarget.name }))) return;
                     setManaging(true);
                     const res = await onHostManagePlayer(manageTarget.id, 'kick');
                     setManaging(false);
-                    if (!res.success) return alert(res.error || 'Kick failed');
+                    if (!res.success) return alert(res.error || t('table.manage.kick_failed'));
                     setManageTargetId(null);
                   }}
                   className="px-3 py-1.5 rounded bg-rose-700 hover:bg-rose-600 text-sm font-semibold disabled:opacity-50"
                 >
-                  Kick Player
+                  {t('table.manage.kick_player')}
                 </button>
                 <button
                   disabled={managing}
                   onClick={() => setManageTargetId(null)}
                   className="ml-auto px-3 py-1.5 rounded bg-white/15 hover:bg-white/25 text-sm disabled:opacity-50"
                 >
-                  Close
+                  {t('common.close')}
                 </button>
               </div>
             </div>
@@ -1423,7 +1438,7 @@ export default function GameTable({
                         style={{ gridColumn: `${revealStartIndex + 1} / span ${revealSpanCount}` }}
                         className="h-8 rounded-full border border-white/35 bg-black/45 hover:bg-black/65 text-[0.62rem] font-extrabold tracking-[0.12em] text-white/85 uppercase"
                       >
-                        Reveal
+                        {t('table.reveal')}
                       </button>
                     </div>
                   )}
@@ -1445,13 +1460,13 @@ export default function GameTable({
                     }}
                     className="px-6 py-2 rounded-lg border border-white/40 bg-black/30 hover:bg-black/45 text-white font-semibold"
                   >
-                    继续下一局
+                    {t('table.continue_next_hand')}
                   </button>
                 </div>
               )}
               {isGamePaused && (
                 <div className="mt-2 px-5 py-2 rounded-lg border border-yellow-300/40 bg-black/35 text-yellow-200 font-semibold">
-                  GAME PAUSED
+                  {t('table.game_paused')}
                 </div>
               )}
             </div>
@@ -1553,18 +1568,18 @@ export default function GameTable({
           })}
         </div>
       </div>
-        <div className="absolute bottom-2 left-2 md:left-3 z-20 w-[330px] md:w-[470px]">
-          <div className="rounded-lg border border-white/15 bg-black/35 p-2">
-            <div className="text-xs text-white/60 mb-1">LOG / LEDGER</div>
-            <div className="space-y-1 min-h-[64px]">
-              {recentChat.length === 0 && <div className="text-xs text-white/45">No messages</div>}
-              {recentChat.map(msg => (
-                <div key={msg.id} className="text-sm text-white/85 truncate">
-                  <span className="text-emerald-300">{msg.playerName}: </span>{msg.message}
-                </div>
-              ))}
-            </div>
-            <div className="mt-2 flex gap-2">
+	        <div className="absolute bottom-2 left-2 md:left-3 z-20 w-[330px] md:w-[470px]">
+	          <div className="rounded-lg border border-white/15 bg-black/35 p-2">
+	            <div className="text-xs text-white/60 mb-1">{t('table.log.title')}</div>
+	            <div className="space-y-1 min-h-[64px]">
+	              {recentChat.length === 0 && <div className="text-xs text-white/45">{t('chat.none_short')}</div>}
+	              {recentChat.map(msg => (
+	                <div key={msg.id} className="text-sm text-white/85 truncate">
+	                  <span className="text-emerald-300">{msg.playerName}: </span>{msg.message}
+	                </div>
+	              ))}
+	            </div>
+	            <div className="mt-2 flex gap-2">
               <input
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
@@ -1574,29 +1589,29 @@ export default function GameTable({
                     setChatInput('');
                   }
                 }}
-                placeholder="Type message..."
-                className="flex-1 bg-black/45 border border-white/20 rounded px-2 py-1 text-sm text-white placeholder:text-white/40 outline-none"
-              />
+	                placeholder={t('chat.placeholder')}
+	                className="flex-1 bg-black/45 border border-white/20 rounded px-2 py-1 text-sm text-white placeholder:text-white/40 outline-none"
+	              />
               <button
                 onClick={() => {
                   if (!chatInput.trim()) return;
                   onSendChat(chatInput.trim());
                   setChatInput('');
                 }}
-                className="px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-sm"
-              >
-                Send
-              </button>
-            </div>
-          </div>
-        </div>
+	                className="px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-sm"
+	              >
+	                {t('chat.send')}
+	              </button>
+	            </div>
+	          </div>
+	        </div>
 
         <div className="absolute bottom-2 right-2 md:right-3 z-20 flex flex-col items-end gap-2 w-[560px] max-w-[calc(100vw-16px)]">
-          {showRunItTwicePanel && (
-            <div className="w-[312px] rounded-xl overflow-hidden border-[3px] border-white/25 bg-[#121722]/92 shadow-[0_10px_24px_rgba(0,0,0,0.35)]">
-              <div className="px-3 pt-4 pb-3 text-center font-extrabold tracking-wide text-[1.35rem] leading-none text-white">
-                RUN IT TWICE?
-              </div>
+	          {showRunItTwicePanel && (
+	            <div className="w-[312px] rounded-xl overflow-hidden border-[3px] border-white/25 bg-[#121722]/92 shadow-[0_10px_24px_rgba(0,0,0,0.35)]">
+	              <div className="px-3 pt-4 pb-3 text-center font-extrabold tracking-wide text-[1.35rem] leading-none text-white">
+	                {t('table.rit.title')}
+	              </div>
               <div className="grid grid-cols-2 border-t border-white/20">
                 <button
                   onClick={() => onRunItTwiceVote(true)}
@@ -1606,9 +1621,9 @@ export default function GameTable({
                     myRunItTwiceVote === true ? 'bg-emerald-600 text-white' : 'bg-emerald-700/85 text-white hover:bg-emerald-600',
                     myRunItTwiceVote !== null && myRunItTwiceVote !== true && 'opacity-50 cursor-not-allowed'
                   )}
-                >
-                  YES
-                </button>
+	                >
+	                  {t('common.yes')}
+	                </button>
                 <button
                   onClick={() => onRunItTwiceVote(false)}
                   disabled={myRunItTwiceVote !== null}
@@ -1617,12 +1632,12 @@ export default function GameTable({
                     myRunItTwiceVote === false ? 'bg-rose-600 text-white' : 'bg-rose-700/90 text-white hover:bg-rose-600',
                     myRunItTwiceVote !== null && myRunItTwiceVote !== false && 'opacity-50 cursor-not-allowed'
                   )}
-                >
-                  NO
-                </button>
-              </div>
-            </div>
-          )}
+	                >
+	                  {t('common.no')}
+	                </button>
+	              </div>
+	            </div>
+	          )}
           {(showHandResult || gameState.stage === 'showdown') && myPlayer && myPlayer.holeCards.length <= 2 && (
             <div
               className={clsx(
@@ -1684,13 +1699,13 @@ export default function GameTable({
           )}
           {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && isMyTurn && (
             <>
-              <div className="text-yellow-300 font-semibold text-3xl tracking-wide">YOUR TURN</div>
-              <div className="bg-white/92 text-black text-4 font-semibold px-6 py-2 rounded-lg">EXTRA TIME ACTIVATED</div>
+              <div className="text-yellow-300 font-semibold text-3xl tracking-wide">{t('table.turn.your_turn')}</div>
+              <div className="bg-white/92 text-black text-4 font-semibold px-6 py-2 rounded-lg">{t('table.turn.extra_time')}</div>
             </>
           )}
           {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && isDiscardStage && (
             <div className="w-full rounded-xl border border-rose-300/30 bg-rose-950/35 p-3">
-              <div className="text-rose-200 font-semibold mb-2 text-sm">Crazy Pineapple: 请选择弃掉一张手牌</div>
+              <div className="text-rose-200 font-semibold mb-2 text-sm">{t('table.discard_prompt')}</div>
               <div className="grid grid-cols-3 gap-2">
                 {(myPlayer?.holeCards || []).map((c, i) => (
                   <button
@@ -1708,58 +1723,60 @@ export default function GameTable({
               </div>
             </div>
           )}
-          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && !showRaisePanel && !isDiscardStage && (
-            <div className={clsx('grid gap-2 w-full', showPrimaryAction ? 'grid-cols-4' : 'grid-cols-3')}>
-            {showPrimaryAction && (
-                <ActionBox
-                hotkey="C"
-                label={callAmt > 0 ? `CALL ${formatChips(callAmt)}` : `BET ${formatChips(gameState.bigBlind)}`}
-                disabled={!canAct}
-                onClick={triggerPrimaryAction}
-              />
-            )}
-            <ActionBox
-              hotkey="R"
-              label="RAISE"
-              disabled={!canAct || !canRaise}
-              onClick={openRaiseAction}
-            />
-            <ActionBox
-              hotkey="K"
-              label="CHECK"
-              disabled={!canAct || !canCheck}
-              onClick={triggerCheckAction}
-            />
-            <ActionBox
-              hotkey="F"
-              label="FOLD"
-              danger
-              disabled={!canAct}
-              onClick={triggerFoldAction}
-            />
-            </div>
-          )}
-          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && canAct && myPlayer && canRaise && showRaisePanel && !isDiscardStage && (
-            <div className="w-full rounded-xl border border-white/15 bg-black/45 p-2 space-y-2">
-              <div className="flex items-stretch gap-2">
-                <div className="w-[180px] rounded-lg border border-white/15 bg-white/5 p-2 text-center">
-                  <div className="text-white/55 text-xs uppercase">Your Bet</div>
-                  <div className="mt-1 inline-flex items-center justify-center bg-emerald-700 px-4 py-1 rounded text-3xl font-bold">
-                    {formatChips(safeRaise)}
-                  </div>
-                </div>
-                <div className="flex-1 grid grid-cols-5 gap-2">
-                  {[
-                    { label: 'MIN RAISE', val: minRaise },
-                    { label: '1/2 POT', val: presetRaiseTo(0.5) },
-                    { label: '3/4 POT', val: presetRaiseTo(0.75) },
-                    { label: 'POT', val: presetRaiseTo(1) },
-                    { label: 'ALL IN', val: maxTotalBet },
-                  ].map((p) => {
-                    const clamped = Math.min(Math.max(p.val, minRaise), maxTotalBet);
-                    return (
-                      <button
-                        key={p.label}
+	          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && !showRaisePanel && !isDiscardStage && (
+	            <div className={clsx('grid gap-2 w-full', showPrimaryAction ? 'grid-cols-4' : 'grid-cols-3')}>
+	            {showPrimaryAction && (
+	                <ActionBox
+	                hotkey="C"
+	                label={callAmt > 0
+                    ? t('table.action.call', { amount: formatChips(callAmt) })
+                    : t('table.action.bet', { amount: formatChips(gameState.bigBlind) })}
+	                disabled={!canAct}
+	                onClick={triggerPrimaryAction}
+	              />
+	            )}
+	            <ActionBox
+	              hotkey="R"
+	              label={t('table.action.raise')}
+	              disabled={!canAct || !canRaise}
+	              onClick={openRaiseAction}
+	            />
+	            <ActionBox
+	              hotkey="K"
+	              label={t('table.action.check')}
+	              disabled={!canAct || !canCheck}
+	              onClick={triggerCheckAction}
+	            />
+	            <ActionBox
+	              hotkey="F"
+	              label={t('table.action.fold')}
+	              danger
+	              disabled={!canAct}
+	              onClick={triggerFoldAction}
+	            />
+	            </div>
+	          )}
+	          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && canAct && myPlayer && canRaise && showRaisePanel && !isDiscardStage && (
+	            <div className="w-full rounded-xl border border-white/15 bg-black/45 p-2 space-y-2">
+	              <div className="flex items-stretch gap-2">
+	                <div className="w-[180px] rounded-lg border border-white/15 bg-white/5 p-2 text-center">
+	                  <div className="text-white/55 text-xs uppercase">{t('table.raise.your_bet')}</div>
+	                  <div className="mt-1 inline-flex items-center justify-center bg-emerald-700 px-4 py-1 rounded text-3xl font-bold">
+	                    {formatChips(safeRaise)}
+	                  </div>
+	                </div>
+	                <div className="flex-1 grid grid-cols-5 gap-2">
+	                  {[
+	                    { label: t('table.raise.min_raise'), val: minRaise },
+	                    { label: t('table.raise.half_pot'), val: presetRaiseTo(0.5) },
+	                    { label: t('table.raise.three_quarter_pot'), val: presetRaiseTo(0.75) },
+	                    { label: t('table.raise.pot'), val: presetRaiseTo(1) },
+	                    { label: t('table.raise.all_in'), val: maxTotalBet },
+	                  ].map((p) => {
+	                    const clamped = Math.min(Math.max(p.val, minRaise), maxTotalBet);
+	                    return (
+	                      <button
+	                        key={p.label}
                         onClick={() => setRaiseAmount(clamped)}
                         className="rounded-lg border border-white/20 bg-white/5 hover:bg-white/10 text-sm font-semibold"
                       >
@@ -1791,21 +1808,21 @@ export default function GameTable({
                 >
                   +
                 </button>
-                <button
-                  onClick={() => setShowRaisePanel(false)}
-                  className="ml-2 rounded-lg border border-white/40 px-6 py-2 text-2xl font-semibold"
-                >
-                  BACK
-                </button>
-                <button
-                  onClick={submitRaiseAction}
-                  className="rounded-lg border border-emerald-500 text-emerald-400 px-6 py-2 text-2xl font-semibold"
-                >
-                  RAISE
-                </button>
-              </div>
-            </div>
-          )}
+	                <button
+	                  onClick={() => setShowRaisePanel(false)}
+	                  className="ml-2 rounded-lg border border-white/40 px-6 py-2 text-2xl font-semibold"
+	                >
+	                  {t('table.raise.back')}
+	                </button>
+	                <button
+	                  onClick={submitRaiseAction}
+	                  className="rounded-lg border border-emerald-500 text-emerald-400 px-6 py-2 text-2xl font-semibold"
+	                >
+	                  {t('table.action.raise')}
+	                </button>
+	              </div>
+	            </div>
+	          )}
         </div>
         </div>
       </div>
@@ -1821,15 +1838,16 @@ function JoinRequestCard({
   defaultBuyIn: number;
   onDecision: (requestId: string, approve: boolean, buyIn?: number) => void;
 }) {
+  const { t } = useI18n();
   const [buyIn, setBuyIn] = useState<number>(defaultBuyIn);
   return (
     <div className="rounded-lg border border-amber-300/40 bg-black/70 px-3 py-2">
-      <div className="text-xs text-amber-300/90 uppercase tracking-widest">Join Request</div>
+      <div className="text-xs text-amber-300/90 uppercase tracking-widest">{t('table.join_request.title')}</div>
       <div className="text-white text-sm mt-1">
-        <span className="font-semibold">{req.playerName}</span> wants to join
+        {t('table.join_request.wants_to_join', { name: req.playerName })}
       </div>
       <div className="mt-2 flex items-center gap-2">
-        <span className="text-xs text-white/70">Buy-in</span>
+        <span className="text-xs text-white/70">{t('table.join_request.buy_in')}</span>
         <input
           type="number"
           value={buyIn}
@@ -1842,13 +1860,13 @@ function JoinRequestCard({
           onClick={() => onDecision(req.requestId, true, buyIn)}
           className="ml-auto px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-sm font-semibold"
         >
-          Approve
+          {t('table.join_request.approve')}
         </button>
         <button
           onClick={() => onDecision(req.requestId, false)}
           className="px-3 py-1 rounded bg-rose-700 hover:bg-rose-600 text-sm font-semibold"
         >
-          Deny
+          {t('table.join_request.deny')}
         </button>
       </div>
     </div>
@@ -1908,6 +1926,7 @@ function ActionBox({
 }
 
 function RulesModal({ gameType, onClose }: { gameType: 'short_deck' | 'regular' | 'omaha' | 'crazy_pineapple'; onClose: () => void }) {
+  const { t } = useI18n();
   const useRegularRanking = gameType === 'regular' || gameType === 'omaha' || gameType === 'crazy_pineapple';
   const rows: Array<{ en: string; zh: string; cards: Array<{ rank: string; suit: string }> }> = useRegularRanking
     ? [
@@ -1940,18 +1959,24 @@ function RulesModal({ gameType, onClose }: { gameType: 'short_deck' | 'regular' 
       <div className="w-[780px] max-w-[92vw] rounded-xl border border-white/20 bg-[#141821] text-white p-4 shadow-[0_20px_45px_rgba(0,0,0,0.5)]">
         <div className="flex items-center justify-between">
           <div className="text-lg font-bold">
-            {gameType === 'short_deck' ? '短牌比大小' : gameType === 'regular' ? '常规德州比大小' : gameType === 'omaha' ? '奥马哈比大小' : 'Crazy Pineapple 比大小'}
+            {gameType === 'short_deck'
+              ? t('table.rules.title.short_deck')
+              : gameType === 'regular'
+                ? t('table.rules.title.regular')
+                : gameType === 'omaha'
+                  ? t('table.rules.title.omaha')
+                  : t('table.rules.title.crazy_pineapple')}
           </div>
           <button
             onClick={onClose}
             className="px-2.5 py-1 rounded bg-white/15 hover:bg-white/25 text-sm"
           >
-            关闭
+            {t('common.close')}
           </button>
         </div>
 
         <div className="mt-3 text-xs text-white/65">
-          从大到小（可滚动）
+          {t('table.rules.scroll_hint')}
         </div>
 
         <div className="mt-2 max-h-[66vh] overflow-y-auto space-y-2 pr-1">
@@ -1969,12 +1994,12 @@ function RulesModal({ gameType, onClose }: { gameType: 'short_deck' | 'regular' 
 
         <div className="mt-3 text-xs text-white/75">
           {gameType === 'short_deck'
-            ? '短牌规则提示：同花 > 葫芦；A-6-7-8-9 为最小顺子。'
+            ? t('table.rules.tip.short_deck')
             : gameType === 'regular'
-              ? '常规规则提示：葫芦 > 同花；A-2-3-4-5 为最小顺子。'
+              ? t('table.rules.tip.regular')
               : gameType === 'omaha'
-                ? '奥马哈规则提示：每人4张手牌，必须且仅能使用2张手牌 + 3张公牌。'
-                : 'Crazy Pineapple 提示：每人先发3张手牌，翻牌圈结束后每位在手玩家必须弃1张。'}
+                ? t('table.rules.tip.omaha')
+                : t('table.rules.tip.crazy_pineapple')}
         </div>
       </div>
     </div>
