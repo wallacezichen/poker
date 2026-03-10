@@ -78,6 +78,15 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
   const [showCreateSettings, setShowCreateSettings] = useState(false);
   const [showModeInfo, setShowModeInfo] = useState(false);
 
+  const localizeJoinError = (err?: string) => {
+    const e = (err || '').trim();
+    if (!e) return '';
+    if (e === '房间不存在' || e.toLowerCase() === 'room not found') return t('lobby.error.room_not_found');
+    if (e === '房间已满' || e.toLowerCase() === 'room is full') return t('lobby.error.room_full');
+    if (e === '玩家会话已失效' || e.toLowerCase() === 'player session expired') return t('lobby.error.session_expired');
+    return e;
+  };
+
   async function handleCreate() {
     if (!playerName.trim()) { setError(t('lobby.error.name_required')); return; }
     setLoading(true); setError('');
@@ -89,7 +98,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
       bigBlind: blind.big,
     });
     setLoading(false);
-    if (!res.success) setError(res.error || t('lobby.error.create_failed'));
+    if (!res.success) setError(localizeJoinError(res.error) || t('lobby.error.create_failed'));
   }
 
   async function handleJoin() {
@@ -98,7 +107,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
     setLoading(true); setError('');
     const res = await onJoinRoom(joinCode.trim().toUpperCase(), playerName.trim());
     setLoading(false);
-    if (!res.success) setError(res.error || t('lobby.error.join_failed'));
+    if (!res.success) setError(localizeJoinError(res.error) || t('lobby.error.join_failed'));
   }
 
   const theme = GAME_THEME[gameType];
@@ -202,7 +211,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                   gameType === 'crazy_pineapple' ? GAME_THEME.crazy_pineapple.activePill : 'bg-white/5 text-white/60 border-white/10 hover:border-white/30'
                 )}
               >
-                疯狂大菠萝
+                {t('game.crazy_pineapple.pill')}
               </button>
             </div>
           </div>

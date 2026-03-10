@@ -97,7 +97,8 @@ export default function PlayerSeat({
               className={clsx(
                 'rotate-[-4deg]',
                 i === 1 && 'rotate-[5deg]',
-                card && isShowdown && bestCardSet.size > 0 && !bestCardSet.has(cardKey(card)) && 'opacity-20 saturate-0 brightness-50 scale-[0.96]',
+                // Keep suit colors (do not desaturate red suits) but still lowlight non-winning cards.
+                card && isShowdown && bestCardSet.size > 0 && !bestCardSet.has(cardKey(card)) && 'opacity-25 brightness-75 contrast-90 scale-[0.96]',
                 card && isShowdown && bestCardSet.size > 0 && bestCardSet.has(cardKey(card)) && 'ring-2 ring-yellow-300/80 shadow-[0_0_14px_rgba(250,204,21,0.55)]'
               )}
             />

@@ -205,11 +205,11 @@ export function registerGameHandlers(
   socket.on('room:join', async ({ roomId, playerName }, cb) => {
     try {
       const roomData = await getRoom(roomId.toUpperCase());
-      if (!roomData) return cb({ success: false, error: '房间不存在' });
+      if (!roomData) return cb({ success: false, error: 'Room not found' });
 
       const existingPlayers = await getPlayers(roomId.toUpperCase());
       if (existingPlayers.length >= roomData.settings.maxPlayers) {
-        return cb({ success: false, error: '房间已满' });
+        return cb({ success: false, error: 'Room is full' });
       }
 
       // Game already started: create join request for host approval
@@ -296,11 +296,11 @@ export function registerGameHandlers(
     try {
       const roomIdUp = roomId.toUpperCase();
       const roomData = await getRoom(roomIdUp);
-      if (!roomData) return cb({ success: false, error: '房间不存在' });
+      if (!roomData) return cb({ success: false, error: 'Room not found' });
 
       const players = await getPlayers(roomIdUp);
       const player = players.find(p => p.id === playerId && !p.isBot);
-      if (!player) return cb({ success: false, error: '玩家会话已失效' });
+      if (!player) return cb({ success: false, error: 'Player session expired' });
 
       // If this player already has another live socket, replace it.
       const existingSocketId = roomSockets.get(roomIdUp)?.get(playerId);

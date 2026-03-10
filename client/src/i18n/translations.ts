@@ -40,6 +40,9 @@ export const translations: Record<Locale, Dict> = {
     'lobby.error.room_required': 'Please enter a room code',
     'lobby.error.create_failed': 'Create failed',
     'lobby.error.join_failed': 'Join failed',
+    'lobby.error.room_not_found': 'Room not found',
+    'lobby.error.room_full': 'Room is full',
+    'lobby.error.session_expired': 'Player session expired',
 
     // Game types
     'game.short_deck.title': 'Short Deck Poker',
@@ -262,6 +265,9 @@ export const translations: Record<Locale, Dict> = {
     'lobby.error.room_required': '请输入房间码',
     'lobby.error.create_failed': '创建失败',
     'lobby.error.join_failed': '加入失败',
+    'lobby.error.room_not_found': '房间不存在',
+    'lobby.error.room_full': '房间已满',
+    'lobby.error.session_expired': '玩家会话已失效',
 
     // Game types
     'game.short_deck.title': '短牌扑克',

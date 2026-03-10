@@ -432,7 +432,8 @@ export default function GameTable({
   const cardShowdownClass = (card?: { rank: string; suit: string }) => {
     if (!card || !isShowdownStage || showdownHighlightCardKeys.size === 0) return '';
     if (!showdownHighlightCardKeys.has(cardKey(card))) {
-      return 'opacity-20 saturate-0 brightness-50 scale-[0.96]';
+      // Keep suit colors (do not desaturate red suits) but still lowlight non-winning cards.
+      return 'opacity-25 brightness-75 contrast-90 scale-[0.96]';
     }
     return 'ring-2 ring-yellow-300/80 shadow-[0_0_14px_rgba(250,204,21,0.55)]';
   };
@@ -1436,7 +1437,8 @@ export default function GameTable({
                           index={i}
                           className={clsx(
                             cardShowdownClass(c),
-                            isDead && 'opacity-45 saturate-0 brightness-75'
+                            // Keep suit colors on dead board cards too.
+                            isDead && 'opacity-45 brightness-90 contrast-90'
                           )}
                         />
                       );

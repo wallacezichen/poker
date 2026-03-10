@@ -684,8 +684,19 @@ function enterFlopDiscardStage(state: FullGameState): boolean {
   if (discardActors.length === 0) return false;
   state.stage = 'flop_discard';
   state.playersToAct = discardActors.map((p) => p.id);
-  const firstDiscard = discardActors.sort((a, b) => a.seatIndex - b.seatIndex)[0];
-  state.currentPlayerIndex = state.players.findIndex((p) => p.id === firstDiscard.id);
+  // Discard order starts from the small blind and proceeds clockwise.
+  const actorIds = new Set(discardActors.map((p) => p.id));
+  const n = state.players.length;
+  let firstIdx = -1;
+  for (let off = 0; off < n; off++) {
+    const idx = (state.smallBlindIndex + off) % n;
+    const p = state.players[idx];
+    if (p && actorIds.has(p.id)) {
+      firstIdx = idx;
+      break;
+    }
+  }
+  state.currentPlayerIndex = firstIdx >= 0 ? firstIdx : state.players.findIndex((p) => p.id === discardActors[0].id);
   return true;
 }
 
