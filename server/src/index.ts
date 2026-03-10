@@ -16,23 +16,6 @@ const hasSupabaseServiceKey = !!process.env.SUPABASE_SERVICE_ROLE_KEY;
 const app = express();
 const httpServer = createServer(app);
 
-// Process-level diagnostics: helps identify why Render restarts the service.
-process.on('SIGTERM', () => {
-  console.error(`[PROC] SIGTERM at ${new Date().toISOString()}`);
-});
-process.on('SIGINT', () => {
-  console.error(`[PROC] SIGINT at ${new Date().toISOString()}`);
-});
-process.on('uncaughtException', (err) => {
-  console.error(`[PROC] uncaughtException at ${new Date().toISOString()}:`, err);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error(`[PROC] unhandledRejection at ${new Date().toISOString()}:`, reason);
-});
-process.on('exit', (code) => {
-  console.error(`[PROC] exit code=${code} at ${new Date().toISOString()}`);
-});
-
 // CORS
 app.use(cors({ origin: [CLIENT_URL, 'http://localhost:3000'], credentials: true }));
 app.use(express.json());
@@ -54,6 +37,53 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   transports: ['websocket', 'polling'],
 });
 
+const HEARTBEAT_MS = Math.max(1_000, Math.floor(Number(process.env.PROC_HEARTBEAT_MS || 60_000)));
+const heartbeatTimer = setInterval(() => {
+  const mu = process.memoryUsage();
+  const toMb = (n: number) => (n / 1024 / 1024).toFixed(1);
+  console.log(
+    `[PROC] heartbeat ts=${new Date().toISOString()} rssMB=${toMb(mu.rss)} heapUsedMB=${toMb(mu.heapUsed)} heapTotalMB=${toMb(mu.heapTotal)} externalMB=${toMb(mu.external)}`
+  );
+}, HEARTBEAT_MS);
+heartbeatTimer.unref();
+
+let shuttingDown = false;
+function shutdown(reason: string, err?: unknown) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  const ts = new Date().toISOString();
+  console.error(`[PROC] shutdown reason=${reason} at=${ts}`);
+  if (err) console.error(`[PROC] shutdown err:`, err);
+
+  clearInterval(heartbeatTimer);
+
+  try {
+    io.close();
+  } catch (e) {
+    console.error(`[PROC] io.close failed:`, e);
+  }
+
+  const killTimer = setTimeout(() => {
+    console.error(`[PROC] forced_exit reason=${reason} at=${new Date().toISOString()}`);
+    process.exit(1);
+  }, 3_000);
+  killTimer.unref();
+
+  httpServer.close(() => {
+    console.error(`[PROC] http_closed reason=${reason} at=${new Date().toISOString()}`);
+    process.exit(0);
+  });
+}
+
+// Process-level diagnostics + predictable shutdown.
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('uncaughtException', (err) => shutdown('uncaughtException', err));
+process.on('unhandledRejection', (reason) => shutdown('unhandledRejection', reason));
+process.on('exit', (code) => {
+  console.error(`[PROC] exit code=${code} at ${new Date().toISOString()}`);
+});
+
 io.on('connection', (socket) => {
   console.log(`[Socket] Connected: ${socket.id}`);
   registerGameHandlers(io, socket);
@@ -68,11 +98,3 @@ httpServer.listen(PORT, HOST, () => {
   console.log(`   SUPABASE_SERVICE_ROLE_KEY set: ${hasSupabaseServiceKey}`);
   console.log(`   Health: /health\n`);
 });
-
-setInterval(() => {
-  const mu = process.memoryUsage();
-  const toMb = (n: number) => (n / 1024 / 1024).toFixed(1);
-  console.log(
-    `[PROC] heartbeat ts=${new Date().toISOString()} rssMB=${toMb(mu.rss)} heapUsedMB=${toMb(mu.heapUsed)} heapTotalMB=${toMb(mu.heapTotal)} externalMB=${toMb(mu.external)}`
-  );
-}, 60_000);

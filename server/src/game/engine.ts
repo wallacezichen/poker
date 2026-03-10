@@ -55,12 +55,44 @@ function getMinRaiseTo(state: FullGameState): number {
 }
 
 function bitCount(mask: number): number {
-  return (mask & 1 ? 1 : 0) + (mask & 2 ? 1 : 0);
+  let m = mask >>> 0;
+  let c = 0;
+  while (m) {
+    m &= (m - 1) >>> 0;
+    c++;
+  }
+  return c;
+}
+
+function fullRevealMaskForCount(n: number): number {
+  const safe = Math.max(0, Math.min(30, Math.floor(n)));
+  return safe <= 0 ? 0 : ((1 << safe) - 1);
+}
+
+function publicHoleCardsByIndex(holeCards: Card[], mask: number): Array<Card | null> {
+  const n = holeCards.length;
+  const res: Array<Card | null> = new Array(n).fill(null);
+  for (let i = 0; i < n; i++) {
+    const bit = 1 << i;
+    if ((mask & bit) !== 0) res[i] = holeCards[i] ?? null;
+  }
+  return res;
 }
 
 function publicHoleCardsForMask(holeCards: Card[], mask: number): Card[] {
-  if (holeCards.length > 2) {
-    return mask === 3 ? holeCards.slice() : [];
+  if (holeCards.length === 3) {
+    if (mask === 7) return holeCards.slice();
+    if (mask === 3) return holeCards.slice(0, 2);
+    if (mask === 5) return [holeCards[0], holeCards[2]].filter(Boolean);
+    if (mask === 6) return [holeCards[1], holeCards[2]].filter(Boolean);
+    if (mask === 1) return holeCards[0] ? [holeCards[0]] : [];
+    if (mask === 2) return holeCards[1] ? [holeCards[1]] : [];
+    if (mask === 4) return holeCards[2] ? [holeCards[2]] : [];
+    return [];
+  }
+  if (holeCards.length > 3) {
+    const full = fullRevealMaskForCount(holeCards.length);
+    return mask === full ? holeCards.slice() : [];
   }
   if (mask === 3) return holeCards.slice(0, 2);
   if (mask === 1) return holeCards[0] ? [holeCards[0]] : [];
@@ -174,7 +206,7 @@ function evaluateSingleRunWinners(
     const labels = p.runItTwiceHandNamesZh ? [...p.runItTwiceHandNamesZh] : ['', ''];
     labels[runIndex] = formatHandLabelEnDetailed(result);
     p.runItTwiceHandNamesZh = [labels[0], labels[1]];
-    p.revealedMask = forceFullReveal ? 3 : 0;
+    p.revealedMask = forceFullReveal ? fullRevealMaskForCount(p.holeCards.length) : 0;
     p.revealedCount = forceFullReveal ? p.holeCards.length : 0;
   }
 
@@ -457,10 +489,11 @@ export function applyAction(
   if (idx !== state.currentPlayerIndex) return { state, error: 'Not your turn' };
 
   const player = state.players[idx];
-  if (player.folded || player.allIn) return { state, error: 'Player cannot act' };
-
   if (state.stage === 'flop_discard') {
+    if (player.folded) return { state, error: 'Player cannot act' };
+    // All-in players still must discard one card in Crazy Pineapple.
     if (action !== 'discard') return { state, error: 'Must discard one card before turn' };
+    if (!state.playersToAct.includes(player.id)) return { state, error: 'Not your turn' };
     if (player.holeCards.length <= 2) return { state, error: 'No card to discard' };
     const discardIdx = Math.max(0, Math.min(player.holeCards.length - 1, Math.floor(raiseAmount ?? (player.holeCards.length - 1))));
     player.holeCards.splice(discardIdx, 1);
@@ -479,6 +512,8 @@ export function applyAction(
     }
     return { state };
   }
+
+  if (player.folded || player.allIn) return { state, error: 'Player cannot act' };
 
   const logEntry: ActionLogEntry = {
     playerId: player.id,
@@ -636,11 +671,22 @@ function moveToNextPlayer(state: FullGameState): void {
   let tries = 0;
   while (tries < n) {
     const p = state.players[next];
-    if (!p.folded && !p.allIn && state.playersToAct.includes(p.id)) break;
+    // In Crazy Pineapple flop discard, all-in players still must discard one card.
+    if (!p.folded && state.playersToAct.includes(p.id) && (state.stage === 'flop_discard' || !p.allIn)) break;
     next = (next + 1) % n;
     tries++;
   }
   state.currentPlayerIndex = next;
+}
+
+function enterFlopDiscardStage(state: FullGameState): boolean {
+  const discardActors = state.players.filter((p) => !p.folded && p.holeCards.length > 2);
+  if (discardActors.length === 0) return false;
+  state.stage = 'flop_discard';
+  state.playersToAct = discardActors.map((p) => p.id);
+  const firstDiscard = discardActors.sort((a, b) => a.seatIndex - b.seatIndex)[0];
+  state.currentPlayerIndex = state.players.findIndex((p) => p.id === firstDiscard.id);
+  return true;
 }
 
 function advanceStage(state: FullGameState): void {
@@ -661,17 +707,9 @@ function advanceStage(state: FullGameState): void {
       state.communityCards.push(dealCard(state), dealCard(state), dealCard(state));
       break;
     case 'flop_discard': {
-      for (const p of state.players) {
-        if (!p.folded && p.holeCards.length > 2 && p.allIn) p.holeCards.pop();
-      }
-      const discardActors = state.players.filter((p) => !p.folded && !p.allIn && p.holeCards.length > 2);
-      if (discardActors.length === 0) {
+      if (!enterFlopDiscardStage(state)) {
         advanceStage(state);
-        return;
       }
-      state.playersToAct = discardActors.map((p) => p.id);
-      const firstDiscard = discardActors.sort((a, b) => a.seatIndex - b.seatIndex)[0];
-      state.currentPlayerIndex = state.players.findIndex((p) => p.id === firstDiscard.id);
       return;
     }
     case 'turn':
@@ -683,6 +721,12 @@ function advanceStage(state: FullGameState): void {
     case 'showdown':
       resolveShowdown(state);
       return;
+  }
+
+  // Crazy Pineapple: if we're in an auto-runout situation and players still have 3 hole cards,
+  // jump into the discard gate immediately after dealing the flop.
+  if ((state.gameType ?? 'short_deck') === 'crazy_pineapple' && state.stage === 'flop' && countLiveNotAllIn(state) <= 1) {
+    if (enterFlopDiscardStage(state)) return;
   }
 
   // If one or fewer players can still act (others are all-in/folded),
@@ -711,7 +755,7 @@ function resolveShowdown(state: FullGameState): void {
   const forceFullReveal = hasAllInContender || (state.gameType === 'omaha' || state.gameType === 'crazy_pineapple');
 
   for (const p of contenders) {
-    p.revealedMask = forceFullReveal ? 3 : 0;
+    p.revealedMask = forceFullReveal ? fullRevealMaskForCount(p.holeCards.length) : 0;
     p.revealedCount = forceFullReveal ? p.holeCards.length : 0;
   }
 
@@ -755,7 +799,7 @@ function resolveShowdown(state: FullGameState): void {
   const winnerInfos: WinnerInfo[] = contenders
     .filter(p => (winnings.get(p.id) || 0) > 0)
     .map((w) => {
-      w.revealedMask = 3;
+      w.revealedMask = fullRevealMaskForCount(w.holeCards.length);
       w.revealedCount = w.holeCards.length;
       return {
         playerId: w.id,
@@ -792,7 +836,7 @@ function resolveShowdownRunItTwice(state: FullGameState): void {
     results2.set(p.id, r2);
     p.handResult = r1;
     p.runItTwiceHandNamesZh = [formatHandLabelEnDetailed(r1), formatHandLabelEnDetailed(r2)];
-    p.revealedMask = forceFullReveal ? 3 : 0;
+    p.revealedMask = forceFullReveal ? fullRevealMaskForCount(p.holeCards.length) : 0;
     p.revealedCount = forceFullReveal ? p.holeCards.length : 0;
   }
   const allPlayers = state.players.filter(p => p.totalBet > 0);
@@ -826,7 +870,7 @@ function resolveShowdownRunItTwice(state: FullGameState): void {
     .map((w) => {
       const chipsWon = winnings.get(w.id)!;
       w.chips += chipsWon;
-      w.revealedMask = 3;
+      w.revealedMask = fullRevealMaskForCount(w.holeCards.length);
       w.revealedCount = w.holeCards.length;
       return {
         playerId: w.id,
@@ -868,8 +912,14 @@ export function sanitizeStateFor(state: FullGameState, viewerId: string): GameSt
     ...publicState,
     players: state.players.map(p => ({
       ...p,
+      holeCardCount: p.holeCards.length,
+      publicHoleCards: p.id === viewerId ? undefined : publicHoleCardsByIndex(p.holeCards, p.revealedMask ?? 0),
       holeCards: p.id === viewerId ? p.holeCards : publicHoleCardsForMask(p.holeCards, p.revealedMask ?? 0),
-      revealedCount: p.holeCards.length > 2 && (p.revealedMask ?? 0) === 3 ? p.holeCards.length : bitCount(p.revealedMask ?? 0),
+      revealedCount: (() => {
+        const full = fullRevealMaskForCount(p.holeCards.length);
+        const m = p.revealedMask ?? 0;
+        return m === full ? p.holeCards.length : bitCount(m);
+      })(),
     })),
   };
 }
@@ -915,11 +965,14 @@ export function advanceRunoutStreet(state: FullGameState): FullGameState {
     const board = state.runItTwice.boards[currentRunIdx];
     const toStage = nextStage(state.stage, state.gameType ?? 'short_deck');
     if (toStage === 'flop_discard') {
-      for (const p of state.players) {
-        if (!p.folded && p.holeCards.length > 2) p.holeCards.pop();
-      }
-      state.stage = 'flop_discard';
       state.communityCards = board.slice();
+      // Crazy Pineapple: pause runout for player-selected discard (even if all-in).
+      if (!enterFlopDiscardStage(state)) {
+        // No one needs to discard; continue runout immediately next tick.
+        state.stage = 'flop_discard';
+        state.playersToAct = [];
+        state.currentPlayerIndex = -1;
+      }
       return state;
     }
     if (toStage === 'showdown') {

@@ -119,6 +119,7 @@ export const translations: Record<Locale, Dict> = {
     'room.error.approval_failed': 'Approval failed',
     'room.error.reveal_failed': 'Reveal failed',
     'room.error.vote_failed': 'Vote failed',
+    'room.error.action_failed': 'Action failed',
 
     // Rebuy prompt
     'rebuy.title': 'You are out of chips',
@@ -146,6 +147,7 @@ export const translations: Record<Locale, Dict> = {
     'table.tools.end_session': 'END SESSION',
     'table.tools.session_ledger': 'SESSION LEDGER',
     'table.reveal': 'Reveal',
+    'table.reveal.show_all': 'SHOW ALL CARDS',
     'table.turn.your_turn': 'YOUR TURN',
     'table.turn.extra_time': 'EXTRA TIME ACTIVATED',
     'table.game_paused': 'GAME PAUSED',
@@ -339,6 +341,7 @@ export const translations: Record<Locale, Dict> = {
     'room.error.approval_failed': '审批失败',
     'room.error.reveal_failed': '翻牌失败',
     'room.error.vote_failed': '投票失败',
+    'room.error.action_failed': '操作失败',
     'table.game_paused': '游戏已暂停',
 
     // Rebuy prompt
@@ -367,6 +370,7 @@ export const translations: Record<Locale, Dict> = {
     'table.tools.end_session': '结束结算',
     'table.tools.session_ledger': '账本',
     'table.reveal': '翻开',
+    'table.reveal.show_all': '亮出所有手牌',
     'table.turn.your_turn': '轮到你了',
     'table.turn.extra_time': '已启用额外时间',
     'table.action.call': '跟注 {amount}',

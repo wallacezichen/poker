@@ -1,6 +1,6 @@
 import { Server, Socket } from 'socket.io';
 import { v4 as uuidv4 } from 'uuid';
-import { ClientToServerEvents, ServerToClientEvents, RoomSettings, RoomPlayer } from '../types/poker';
+import { Card, ClientToServerEvents, ServerToClientEvents, RoomSettings, RoomPlayer } from '../types/poker';
 import { initHand, applyAction, sanitizeStateFor, FullGameState, advanceRunoutStreet } from '../game/engine';
 import { decideBotAction, getBotThinkTime } from '../game/botAI';
 import {
@@ -703,15 +703,35 @@ export function registerGameHandlers(
     const state = activeGames.get(roomId);
     if (!state) return cb({ success: false, error: 'No active game' });
     if (state.stage !== 'showdown') return cb({ success: false, error: 'Only available at showdown' });
-    if (slot !== 1 && slot !== 2) return cb({ success: false, error: 'Invalid reveal slot' });
+    const slotNum = Number(slot);
+    if (slotNum !== 1 && slotNum !== 2 && slotNum !== 3) return cb({ success: false, error: 'Invalid reveal slot' });
 
     const player = state.players.find((p) => p.id === playerId);
     if (!player) return cb({ success: false, error: 'Player not found' });
 
-    const bit = slot === 1 ? 1 : 2;
+    const holeCount = player.holeCards.length;
+    if (holeCount <= 1) return cb({ success: false, error: 'No hole cards to reveal' });
+
+    if (holeCount === 2 && slotNum === 3) {
+      return cb({ success: false, error: 'Invalid reveal slot' });
+    }
+    if (holeCount > 3 && slotNum === 3) {
+      return cb({ success: false, error: 'Invalid reveal slot' });
+    }
+
+    const bit = slotNum === 1 ? 1 : slotNum === 2 ? 2 : 4;
+    const fullMask = (1 << Math.min(30, holeCount)) - 1;
     const nextMask = (player.revealedMask ?? 0) | bit;
     player.revealedMask = nextMask;
-    player.revealedCount = (nextMask & 1 ? 1 : 0) + (nextMask & 2 ? 1 : 0);
+    player.revealedCount = nextMask === fullMask ? holeCount : (() => {
+      let m = nextMask >>> 0;
+      let c = 0;
+      while (m) {
+        m &= (m - 1) >>> 0;
+        c++;
+      }
+      return c;
+    })();
     await saveGameState(state);
     broadcastGameState(io, roomId, state);
     io.to(roomId).emit('game:hand_result', {
@@ -835,6 +855,11 @@ export function registerGameHandlers(
     const state = activeGames.get(roomId);
     if (!state) return cb({ success: false, error: 'No active game' });
 
+    // applyAction mutates state in-place; capture "before" snapshot needed for suspense rendering.
+    const beforeStage = state.stage;
+    const beforeCommunityCards = state.communityCards.slice();
+    const beforeBetsById = new Map(state.players.map((p) => [p.id, p.bet]));
+
     // Clear action timer
     clearActionTimer(roomId);
 
@@ -842,14 +867,14 @@ export function registerGameHandlers(
     if (error) return cb({ success: false, error });
 
     const isStreetAdvanceWithSuspense =
-      (action === 'check' || action === 'call' || action === 'raise' || action === 'allin') &&
+      (action === 'check' || action === 'call' || action === 'raise' || action === 'allin' || action === 'discard') &&
       state.stage !== 'showdown' &&
-      state.stage !== newState.stage;
+      beforeStage !== newState.stage;
 
     if (isStreetAdvanceWithSuspense) {
       const suspenseState = JSON.parse(JSON.stringify(newState)) as FullGameState;
-      suspenseState.stage = state.stage;
-      suspenseState.communityCards = newState.communityCards.slice(0, communityCountForStage(state.stage));
+      suspenseState.stage = beforeStage;
+      suspenseState.communityCards = beforeCommunityCards;
       suspenseState.currentPlayerIndex = -1;
       suspenseState.playersToAct = [];
       suspenseState.winners = undefined;
@@ -859,9 +884,8 @@ export function registerGameHandlers(
       }
       // Keep this street's full bet layout visible during suspense window:
       // start from previous street bets, then apply last action "to" amount.
-      const prevBetById = new Map(state.players.map((p) => [p.id, p.bet]));
       for (const p of suspenseState.players) {
-        p.bet = Number(prevBetById.get(p.id) || 0);
+        p.bet = Number(beforeBetsById.get(p.id) || 0);
       }
 
       // Ensure last actor uses the final "to" amount for call/raise/all-in bubble.
@@ -1024,10 +1048,47 @@ function broadcastGameState(
 }
 
 function publicPlayersForShowdown(state: FullGameState) {
+  const fullMaskForCount = (n: number) => {
+    const safe = Math.max(0, Math.min(30, Math.floor(n)));
+    return safe <= 0 ? 0 : ((1 << safe) - 1);
+  };
+  const bitCount = (mask: number) => {
+    let m = mask >>> 0;
+    let c = 0;
+    while (m) {
+      m &= (m - 1) >>> 0;
+      c++;
+    }
+    return c;
+  };
+  const publicHoleCardsByIndex = (holeCards: Card[], mask: number) => {
+    const n = holeCards.length;
+    const res: Array<Card | null> = new Array(n).fill(null);
+    for (let i = 0; i < n; i++) {
+      const bit = 1 << i;
+      if ((mask & bit) !== 0) res[i] = holeCards[i] ?? null;
+    }
+    return res;
+  };
+
   return state.players.map((p) => ({
     ...p,
+    holeCardCount: p.holeCards.length,
+    publicHoleCards: publicHoleCardsByIndex(p.holeCards, p.revealedMask ?? 0),
     holeCards: p.holeCards.length > 2
-      ? ((p.revealedMask ?? 0) === 3 ? p.holeCards.slice() : [])
+      ? (() => {
+        const m = p.revealedMask ?? 0;
+        if (p.holeCards.length === 3) {
+          if (m === 7) return p.holeCards.slice();
+          if (m === 3) return p.holeCards.slice(0, 2);
+          if (m === 1) return p.holeCards[0] ? [p.holeCards[0]] : [];
+          if (m === 2) return p.holeCards[1] ? [p.holeCards[1]] : [];
+          if (m === 4) return p.holeCards[2] ? [p.holeCards[2]] : [];
+          return [];
+        }
+        const full = fullMaskForCount(p.holeCards.length);
+        return m === full ? p.holeCards.slice() : [];
+      })()
       : (p.revealedMask ?? 0) === 3
         ? p.holeCards.slice(0, 2)
         : (p.revealedMask ?? 0) === 1
@@ -1035,9 +1096,11 @@ function publicPlayersForShowdown(state: FullGameState) {
           : (p.revealedMask ?? 0) === 2
             ? (p.holeCards[1] ? [p.holeCards[1]] : [])
             : [],
-    revealedCount: p.holeCards.length > 2 && (p.revealedMask ?? 0) === 3
-      ? p.holeCards.length
-      : ((p.revealedMask ?? 0) & 1 ? 1 : 0) + ((p.revealedMask ?? 0) & 2 ? 1 : 0),
+    revealedCount: (() => {
+      const full = fullMaskForCount(p.holeCards.length);
+      const m = p.revealedMask ?? 0;
+      return m === full ? p.holeCards.length : bitCount(m);
+    })(),
   }));
 }
 
@@ -1057,10 +1120,10 @@ function shouldAutoRunout(state: FullGameState): boolean {
 function isRunItTwiceEligible(state: FullGameState): boolean {
   if (state.stage === 'showdown') return false;
   if (state.playersToAct.length > 0) return false;
+  if ((state.gameType ?? 'short_deck') === 'crazy_pineapple') return false;
   const remaining = state.players.filter(p => !p.folded);
   if (remaining.length !== 2) return false;
   if (!remaining.some(p => p.allIn)) return false;
-  if ((state.gameType ?? 'short_deck') === 'crazy_pineapple' && remaining.some(p => p.holeCards.length > 2)) return false;
   if (state.communityCards.length >= 5) return false;
   return true;
 }
@@ -1147,6 +1210,7 @@ function startDelayedRunout(
 ): void {
   if (runoutTimers.has(roomId)) return;
   if (pausedRooms.has(roomId)) return;
+  if (streetRevealTimers.has(roomId)) return;
   const state = activeGames.get(roomId);
   if (!state || !shouldAutoRunout(state)) return;
   if (state.runItTwice?.status === 'pending') return;
@@ -1157,22 +1221,64 @@ function startDelayedRunout(
     if (!current) return;
     if (!shouldAutoRunout(current)) return;
 
-    const next = advanceRunoutStreet(current);
-    activeGames.set(roomId, next);
-    saveGameState(next).catch(console.error);
-    broadcastGameState(io, roomId, next);
+    // advanceRunoutStreet mutates state in-place; compute next from a snapshot so we can render suspense.
+    const beforeStage = current.stage;
+    const beforeCommunityCards = current.communityCards.slice();
+    const next = advanceRunoutStreet(JSON.parse(JSON.stringify(current)) as FullGameState);
+    const stageChanged = beforeStage !== next.stage;
 
-    const runItTwiceFinalized = next.runItTwice?.status === 'agreed' && next.runItTwice.phase === 'final';
-    if (next.stage === 'showdown' && (!next.runItTwice || next.runItTwice.status !== 'agreed' || runItTwiceFinalized)) {
-      finishShowdown(io, roomId, next);
+    const commitNext = () => {
+      streetRevealTimers.delete(roomId);
+      activeGames.set(roomId, next);
+      saveGameState(next).catch(console.error);
+      broadcastGameState(io, roomId, next);
+
+      const runItTwiceFinalized = next.runItTwice?.status === 'agreed' && next.runItTwice.phase === 'final';
+      if (next.stage === 'showdown' && (!next.runItTwice || next.runItTwice.status !== 'agreed' || runItTwiceFinalized)) {
+        finishShowdown(io, roomId, next);
+        return;
+      }
+      if (maybeStartRunItTwiceOffer(io, roomId, next)) {
+        // wait for yes/no votes
+        return;
+      }
+      if (shouldAutoRunout(next)) {
+        // Keep total cadence ~= 3s between visible street reveals:
+        // 1.5s suspense + 1.5s idle.
+        const t = setTimeout(tick, 1500);
+        runoutTimers.set(roomId, t);
+        return;
+      }
+      scheduleCurrentPlayerAction(io, roomId, next);
+    };
+
+    if (stageChanged) {
+      // Broadcast a suspense state for 1.5s, then reveal the next street.
+      const suspenseState = JSON.parse(JSON.stringify(next)) as FullGameState;
+      suspenseState.stage = beforeStage;
+      suspenseState.communityCards = beforeCommunityCards;
+      suspenseState.currentPlayerIndex = -1;
+      suspenseState.playersToAct = [];
+      suspenseState.winners = undefined;
+      for (const p of suspenseState.players) {
+        p.handResult = undefined;
+        p.runItTwiceHandNamesZh = undefined;
+      }
+      activeGames.set(roomId, suspenseState);
+      saveGameState(suspenseState).catch(console.error);
+      broadcastGameState(io, roomId, suspenseState);
+
+      const revealTimer = setTimeout(commitNext, 1500);
+      streetRevealTimers.set(roomId, revealTimer);
       return;
     }
 
-    const timer = setTimeout(tick, 3000);
-    runoutTimers.set(roomId, timer);
+    commitNext();
   };
 
-  const timer = setTimeout(tick, 3000);
+  // Start suspense window halfway through the previous 3s interval:
+  // suspense(1.5s) + reveal(then) + idle(1.5s) = ~3s cadence.
+  const timer = setTimeout(tick, 1500);
   runoutTimers.set(roomId, timer);
 }
 
@@ -1185,7 +1291,8 @@ function scheduleCurrentPlayerAction(
   if (state.stage === 'showdown') return;
 
   const currentPlayer = state.players[state.currentPlayerIndex];
-  if (!currentPlayer || currentPlayer.folded || currentPlayer.allIn) return;
+  // Crazy Pineapple: in flop_discard, even all-in players still must act (discard).
+  if (!currentPlayer || currentPlayer.folded || (currentPlayer.allIn && state.stage !== 'flop_discard')) return;
 
   if (currentPlayer.isBot) {
     const decision = decideBotAction(state, currentPlayer.id);

@@ -144,7 +144,9 @@ export default function RoomPage() {
   }
 
   function handleAction(action: any, amount?: number) {
-    performAction(action, amount);
+    performAction(action, amount).then((res) => {
+      if (!res.success) alert(res.error || t('room.error.action_failed'));
+    });
   }
 
   async function handleSetAway(away: boolean) {
@@ -171,9 +173,10 @@ export default function RoomPage() {
     return updateRoomSettings(settings);
   }
 
-  async function handleRevealCards(count: 1 | 2) {
+  async function handleRevealCards(count: 1 | 2 | 3) {
     const res = await revealCards(count);
     if (!res.success) alert(res.error || t('room.error.reveal_failed'));
+    return res;
   }
 
   async function handleRunItTwiceVote(agree: boolean) {

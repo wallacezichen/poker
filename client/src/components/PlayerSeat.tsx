@@ -39,13 +39,24 @@ export default function PlayerSeat({
   isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false, autoPostAmount, autoPostActive = false, gameType = 'short_deck',
 }: PlayerSeatProps) {
   const { t } = useI18n();
-  const expectedHoleCount = gameType === 'omaha' ? 4 : 2;
-  const showCards = isMe || (player.holeCards?.length ?? 0) > 0;
+  const expectedHoleCount =
+    gameType === 'omaha'
+      ? 4
+      : gameType === 'crazy_pineapple'
+        ? (isMe ? ((player.holeCards?.length ?? 0) >= 3 ? 3 : 2) : (player.holeCardCount ?? player.publicHoleCards?.length ?? 3))
+        : 2;
+  const showCards =
+    isMe ||
+    (player.publicHoleCards ? player.publicHoleCards.some(Boolean) : false) ||
+    (player.holeCards?.length ?? 0) > 0;
   const mask = player.revealedMask ?? 0;
   let displayCards: Array<CardType | undefined> = [];
   if (isMe) {
     displayCards = [...(player.holeCards || [])];
     if (displayCards.length === 0) displayCards = new Array(expectedHoleCount).fill(undefined);
+  } else if (expectedHoleCount === 3 && player.publicHoleCards) {
+    displayCards = player.publicHoleCards.map((c) => (c ?? undefined));
+    if (displayCards.length < 3) displayCards = [...displayCards, ...new Array(3 - displayCards.length).fill(undefined)];
   } else if (mask === 1) {
     displayCards = [player.holeCards?.[0], undefined];
   } else if (mask === 2) {
@@ -58,8 +69,10 @@ export default function PlayerSeat({
   }
   const liveBest = isMe ? evaluateBestHandName([...player.holeCards, ...communityCards], gameType) : '';
   const handLabel = player.handResult ? formatHandLabelEnDetailed(player.handResult) : liveBest;
-  const runItTwiceLabels = player.runItTwiceHandNamesZh;
-  const showPublicHandLabel = (player.revealedMask ?? 0) === 3;
+  // Crazy Pineapple hard-disables "Run it twice", so ignore any stale labels.
+  const runItTwiceLabels = gameType === 'crazy_pineapple' ? undefined : player.runItTwiceHandNamesZh;
+  const fullRevealMask = expectedHoleCount === 4 ? 15 : expectedHoleCount === 3 ? 7 : 3;
+  const showPublicHandLabel = (player.revealedMask ?? 0) === fullRevealMask;
   const canSeeHandLabel = isMe || showPublicHandLabel;
   const bestCardSet = highlightedCardKeys ?? new Set((player.handResult?.cards || []).map(cardKey));
 

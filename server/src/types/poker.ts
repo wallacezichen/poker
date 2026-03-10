@@ -29,7 +29,9 @@ export interface PlayerState {
   isBot: boolean;
   isConnected: boolean;
   seatIndex: number;
-  revealedMask?: number; // bitmask: 1=left card, 2=right card
+  holeCardCount?: number; // number of hole cards held (even if hidden)
+  publicHoleCards?: Array<Card | null>; // per-index reveal view for non-self
+  revealedMask?: number; // bitmask: 1=card0, 2=card1, 4=card2 (used for showdown reveals)
   revealedCount?: number; // public revealed hole card count at showdown
   runItTwiceHandNamesZh?: string[]; // [run1, run2] labels when run-it-twice is used
   handResult?: HandResult; // populated at showdown
@@ -170,7 +172,7 @@ export interface ClientToServerEvents {
   'room:join_request_decision': (payload: { requestId: string; approve: boolean; buyIn?: number }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:pause': (payload: { paused: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:start': (cb: (res: { success: boolean; error?: string }) => void) => void;
-  'game:reveal_cards': (payload: { slot: 1 | 2 }, cb: (res: { success: boolean; error?: string }) => void) => void;
+  'game:reveal_cards': (payload: { slot: 1 | 2 | 3 }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:reveal_dead_board': (cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:run_it_twice_vote': (payload: { agree: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:rebuy_or_leave': (

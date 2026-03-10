@@ -453,7 +453,7 @@ export function useSocket() {
     });
   }
 
-  function revealCards(slot: 1 | 2) {
+  function revealCards(slot: 1 | 2 | 3) {
     return new Promise<{ success: boolean; error?: string }>((resolve) => {
       getSocket().emit('game:reveal_cards', { slot }, (res) => resolve(res));
     });

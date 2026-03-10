@@ -194,7 +194,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                 )}
               >
                 奥马哈
-              </button>
+              </button> */}
               <button
                 onClick={() => setGameType('crazy_pineapple')}
                 className={clsx(
@@ -203,7 +203,7 @@ export default function Lobby({ onCreateRoom, onJoinRoom, isConnected, initialRo
                 )}
               >
                 疯狂大菠萝
-              </button> */}
+              </button>
             </div>
           </div>
 

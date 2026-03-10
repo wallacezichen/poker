@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GameState, Room, JoinRequest } from '../types/poker';
 import Card from './Card';
 import PlayerSeat from './PlayerSeat';
@@ -97,7 +97,7 @@ interface GameTableProps {
   onUpdateRoomSettings: (settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number }>) => Promise<{ success: boolean; error?: string }>;
   onSetPause: (paused: boolean) => void;
   onNextHand: () => void;
-  onRevealCards: (count: 1 | 2) => void;
+  onRevealCards: (count: 1 | 2 | 3) => Promise<{ success: boolean; error?: string } | void>;
   onRevealDeadBoard: () => void;
   onRunItTwiceVote: (agree: boolean) => void;
   onEndSession: (rows: Array<{ id: string; name: string; buyIn: number; buyOut: number; net: number }>) => void;
@@ -115,7 +115,7 @@ export default function GameTable({
     handResult, showHandResult, setShowHandResult, setHandResult, isGamePaused, rebuyCountByPlayerId,
   } = useGameStore();
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setInGame(true);
     return () => setInGame(false);
   }, [setInGame]);
@@ -191,7 +191,18 @@ export default function GameTable({
   const isDiscardStage = gameState.stage === 'flop_discard' && (room.settings.gameType ?? 'short_deck') === 'crazy_pineapple';
   const isRegularGame = (room.settings.gameType ?? 'short_deck') === 'regular';
   const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === myPlayerId;
-  const canAct = isMyTurn && !bombIntroRunning && !myPlayer?.folded && !myPlayer?.allIn && gameState.stage !== 'showdown' && !isGamePaused;
+  const canAct =
+    isMyTurn &&
+    !bombIntroRunning &&
+    !myPlayer?.folded &&
+    gameState.stage !== 'showdown' &&
+    !isGamePaused &&
+    // Crazy Pineapple: all-in players still must discard after the flop.
+    (isDiscardStage ? true : !myPlayer?.allIn);
+  const canClickDiscard =
+    canAct &&
+    isDiscardStage &&
+    (myPlayer?.holeCards?.length ?? 0) > 2;
   const displayedPot = useMemo(() => {
     if (!bombIntroRunning || !gameState.bombPot?.active) return gameState.pot;
     const visibleCount = Math.min(bombIntroStep + 1, bombIntroOrderIds.length);
@@ -235,7 +246,9 @@ export default function GameTable({
         : t('game.short_deck.title');
   const meInRoom = room.players.find(p => p.id === myPlayerId);
   const isAway = !!meInRoom?.isAway;
-  const runItTwice = gameState.runItTwice;
+  const isCrazyPineapple = room.settings.gameType === 'crazy_pineapple';
+  // Crazy Pineapple: never offer/visualize "Run it twice" (client hard-disable).
+  const runItTwice = isCrazyPineapple ? undefined : gameState.runItTwice;
   const winnerSource = (showHandResult ? handResult?.winners : undefined) || gameState.winners || [];
   const runWinnerIds = (() => {
     const rs = runItTwice?.runResults || [];
@@ -360,6 +373,8 @@ export default function GameTable({
   }, [gameState.handNumber, gameState.stage, twoSevenBonus, twoSevenCollected.length]);
   const manageTarget = manageTargetId ? room.players.find((p) => p.id === manageTargetId) : undefined;
   const myRevealMask = myPlayer?.revealedMask ?? 0;
+  const myFullRevealMask = myPlayer?.holeCards?.length === 3 ? 7 : 3;
+  const isMyFullyRevealed = myRevealMask === myFullRevealMask;
   const myRunItTwiceVote = runItTwice?.votes?.[myPlayerId] ?? null;
   const showRunItTwicePanel = runItTwice?.status === 'pending' && myPlayerId in (runItTwice?.votes || {});
   const showdownPlayers = gameState.players.filter((p) => !p.folded && !!p.handResult);
@@ -1484,6 +1499,7 @@ export default function GameTable({
               bet: 0,
               totalBet: 0,
               holeCards: [],
+              holeCardCount: room.settings.gameType === 'omaha' ? 4 : room.settings.gameType === 'crazy_pineapple' ? 3 : 2,
               folded: false,
               allIn: false,
               isBot: roomPlayer.isBot,
@@ -1638,83 +1654,107 @@ export default function GameTable({
 	              </div>
 	            </div>
 	          )}
-          {(showHandResult || gameState.stage === 'showdown') && myPlayer && myPlayer.holeCards.length <= 2 && (
-            <div
-              className={clsx(
-                'relative w-[312px] rounded-xl overflow-hidden border-[3px] border-[#25d483] shadow-[0_10px_24px_rgba(0,0,0,0.35)]',
-                myRevealMask === 3 ? 'bg-[#35b973]' : 'bg-[#121722]/92'
-              )}
-            >
-              <span
+          {(showHandResult || gameState.stage === 'showdown') &&
+            myPlayer &&
+            (myPlayer.holeCards.length <= 2 ||
+              (isCrazyPineapple && myPlayer.holeCards.length === 3)) && (
+              <div
                 className={clsx(
-                  'absolute right-3 top-2 text-[1.7rem] font-bold leading-none',
-                  myRevealMask === 3 ? 'text-white' : 'text-[#2edd8f]'
+                  'relative w-[312px] rounded-xl overflow-hidden border-[3px] border-[#25d483] shadow-[0_10px_24px_rgba(0,0,0,0.35)]',
+                  isMyFullyRevealed ? 'bg-[#35b973]' : 'bg-[#121722]/92'
                 )}
               >
-                s
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  if ((myRevealMask & 1) === 0) onRevealCards(1);
-                  if ((myRevealMask & 2) === 0) onRevealCards(2);
-                }}
-                disabled={myRevealMask === 3}
-                className={clsx(
-                  'w-full px-3 pt-4 pb-3 text-center font-extrabold tracking-wide text-[1.55rem] leading-none whitespace-nowrap',
-                  myRevealMask !== 3 && 'hover:bg-black/10',
-                  myRevealMask === 3 && 'cursor-default',
-                  myRevealMask === 3 ? 'text-white' : 'text-[#2edd8f]'
-                )}
-              >
-                SHOW ALL CARDS
-              </button>
-              <div className="grid grid-cols-2 border-t-[2px] border-[#25d483]">
-                <button
-                  onClick={() => onRevealCards(1)}
-                  disabled={(myRevealMask & 1) !== 0}
+                <span
                   className={clsx(
-                    'relative px-3 pt-3 pb-4 font-extrabold text-[2.3rem] leading-none border-r-[2px] border-[#25d483] transition-colors',
-                    (myRevealMask & 1) !== 0
-                      ? 'bg-[#35b973] text-white'
-                      : 'bg-transparent text-[#2edd8f] hover:bg-black/10'
+                    'absolute right-3 top-2 text-[1.7rem] font-bold leading-none',
+                    isMyFullyRevealed ? 'text-white' : 'text-[#2edd8f]'
                   )}
                 >
-                  {cardShortLabel(myPlayer.holeCards?.[0])}
-                </button>
+                  s
+                </span>
                 <button
-                  onClick={() => onRevealCards(2)}
-                  disabled={(myRevealMask & 2) !== 0}
+                  type="button"
+                  onClick={async () => {
+                    if ((myRevealMask & 1) === 0) await onRevealCards(1);
+                    if ((myRevealMask & 2) === 0) await onRevealCards(2);
+                    if (myPlayer.holeCards.length === 3 && (myRevealMask & 4) === 0) await onRevealCards(3);
+                  }}
+                  disabled={isMyFullyRevealed}
                   className={clsx(
-                    'relative px-3 pt-3 pb-4 font-extrabold text-[2.3rem] leading-none transition-colors',
-                    (myRevealMask & 2) !== 0
-                      ? 'bg-[#35b973] text-white'
-                      : 'bg-transparent text-[#2edd8f] hover:bg-black/10'
+                    'w-full px-3 pt-4 pb-3 text-center font-extrabold tracking-wide text-[1.55rem] leading-none whitespace-nowrap',
+                    !isMyFullyRevealed && 'hover:bg-black/10',
+                    isMyFullyRevealed && 'cursor-default',
+                    isMyFullyRevealed ? 'text-white' : 'text-[#2edd8f]'
                   )}
                 >
-                  {cardShortLabel(myPlayer.holeCards?.[1])}
+                  {t('table.reveal.show_all')}
                 </button>
+                <div
+                  className={clsx(
+                    'grid border-t-[2px] border-[#25d483]',
+                    myPlayer.holeCards.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
+                  )}
+                >
+                  <button
+                    onClick={() => onRevealCards(1)}
+                    disabled={(myRevealMask & 1) !== 0}
+                    className={clsx(
+                      'relative px-3 pt-3 pb-4 font-extrabold text-[2.3rem] leading-none border-r-[2px] border-[#25d483] transition-colors',
+                      (myRevealMask & 1) !== 0
+                        ? 'bg-[#35b973] text-white'
+                        : 'bg-transparent text-[#2edd8f] hover:bg-black/10'
+                    )}
+                  >
+                    {cardShortLabel(myPlayer.holeCards?.[0])}
+                  </button>
+                  <button
+                    onClick={() => onRevealCards(2)}
+                    disabled={(myRevealMask & 2) !== 0}
+                    className={clsx(
+                      'relative px-3 pt-3 pb-4 font-extrabold text-[2.3rem] leading-none transition-colors',
+                      myPlayer.holeCards.length === 3 && 'border-r-[2px] border-[#25d483]',
+                      (myRevealMask & 2) !== 0
+                        ? 'bg-[#35b973] text-white'
+                        : 'bg-transparent text-[#2edd8f] hover:bg-black/10'
+                    )}
+                  >
+                    {cardShortLabel(myPlayer.holeCards?.[1])}
+                  </button>
+                  {myPlayer.holeCards.length === 3 && (
+                    <button
+                      type="button"
+                      onClick={() => onRevealCards(3)}
+                      disabled={(myRevealMask & 4) !== 0}
+                      className={clsx(
+                        'relative px-3 pt-3 pb-4 font-extrabold text-[2.3rem] leading-none transition-colors',
+                        ((myRevealMask & 4) !== 0 || isMyFullyRevealed) ? 'bg-[#35b973] text-white' : 'bg-transparent text-[#2edd8f] hover:bg-black/10',
+                        (myRevealMask & 4) === 0 && 'cursor-pointer'
+                      )}
+                    >
+                      {cardShortLabel(myPlayer.holeCards?.[2])}
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
           {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && isMyTurn && (
             <>
               <div className="text-yellow-300 font-semibold text-3xl tracking-wide">{t('table.turn.your_turn')}</div>
               <div className="bg-white/92 text-black text-4 font-semibold px-6 py-2 rounded-lg">{t('table.turn.extra_time')}</div>
             </>
           )}
-          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && isDiscardStage && (
+          {!showHandResult && gameState.stage !== 'showdown' && !bombIntroRunning && isDiscardStage && (myPlayer?.holeCards?.length ?? 0) > 2 && (
             <div className="w-full rounded-xl border border-rose-300/30 bg-rose-950/35 p-3">
               <div className="text-rose-200 font-semibold mb-2 text-sm">{t('table.discard_prompt')}</div>
               <div className="grid grid-cols-3 gap-2">
                 {(myPlayer?.holeCards || []).map((c, i) => (
                   <button
                     key={`${c.rank}${c.suit}${i}`}
-                    disabled={!canAct}
+                    disabled={!canClickDiscard}
                     onClick={() => onAction('discard', i)}
                     className={clsx(
                       'rounded-lg border px-2 py-3 text-xl font-extrabold transition-colors',
-                      canAct ? 'border-rose-200/50 bg-rose-900/35 hover:bg-rose-800/45 text-rose-100' : 'border-white/20 bg-black/25 text-white/35'
+                      canClickDiscard ? 'border-rose-200/50 bg-rose-900/35 hover:bg-rose-800/45 text-rose-100' : 'border-white/20 bg-black/25 text-white/35'
                     )}
                   >
                     {cardShortLabel(c)}
@@ -1926,7 +1966,7 @@ function ActionBox({
 }
 
 function RulesModal({ gameType, onClose }: { gameType: 'short_deck' | 'regular' | 'omaha' | 'crazy_pineapple'; onClose: () => void }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const useRegularRanking = gameType === 'regular' || gameType === 'omaha' || gameType === 'crazy_pineapple';
   const rows: Array<{ en: string; zh: string; cards: Array<{ rank: string; suit: string }> }> = useRegularRanking
     ? [
@@ -1935,7 +1975,7 @@ function RulesModal({ gameType, onClose }: { gameType: 'short_deck' | 'regular' 
       { en: 'Four of a Kind', zh: '四条', cards: [{ rank: 'K', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'K', suit: '♥' }, { rank: 'K', suit: '♠' }, { rank: 'A', suit: '♣' }] },
       { en: 'Full House', zh: '葫芦', cards: [{ rank: 'A', suit: '♥' }, { rank: 'A', suit: '♦' }, { rank: 'A', suit: '♣' }, { rank: 'K', suit: '♦' }, { rank: 'K', suit: '♣' }] },
       { en: 'Flush', zh: '同花', cards: [{ rank: 'A', suit: '♠' }, { rank: 'K', suit: '♠' }, { rank: 'Q', suit: '♠' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♠' }] },
-      { en: 'Straight (A-2-3-4-5)', zh: '顺子（A-2-3-4-5）', cards: [{ rank: 'A', suit: '♣' }, { rank: '2', suit: '♦' }, { rank: '3', suit: '♠' }, { rank: '4', suit: '♥' }, { rank: '5', suit: '♣' }] },
+      { en: 'Straight', zh: '顺子', cards: [{ rank: 'A', suit: '♣' }, { rank: '2', suit: '♦' }, { rank: '3', suit: '♠' }, { rank: '4', suit: '♥' }, { rank: '5', suit: '♣' }] },
       { en: 'Three of a Kind', zh: '三条', cards: [{ rank: 'Q', suit: '♣' }, { rank: 'Q', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '8', suit: '♣' }] },
       { en: 'Two Pair', zh: '两对', cards: [{ rank: 'A', suit: '♣' }, { rank: 'A', suit: '♦' }, { rank: 'K', suit: '♥' }, { rank: 'K', suit: '♠' }, { rank: '7', suit: '♣' }] },
       { en: 'One Pair', zh: '一对', cards: [{ rank: 'A', suit: '♣' }, { rank: 'A', suit: '♦' }, { rank: 'Q', suit: '♥' }, { rank: '9', suit: '♠' }, { rank: '7', suit: '♣' }] },
@@ -1981,8 +2021,10 @@ function RulesModal({ gameType, onClose }: { gameType: 'short_deck' | 'regular' 
 
         <div className="mt-2 max-h-[66vh] overflow-y-auto space-y-2 pr-1">
           {rows.map((row, idx) => (
-            <div key={row.en} className="flex items-center justify-between rounded-lg bg-white/5 border border-white/10 px-3 py-2 gap-2">
-              <div className="w-52 text-sm font-semibold text-amber-200">{idx + 1}. {row.en} / {row.zh}</div>
+            <div key={`${idx}-${row.en}`} className="flex items-center justify-between rounded-lg bg-white/5 border border-white/10 px-3 py-2 gap-2">
+              <div className="w-52 text-sm font-semibold text-amber-200">
+                {idx + 1}. {locale === 'zh' ? row.zh : row.en}
+              </div>
               <div className="flex gap-2">
                 {row.cards.map((c, i) => (
                   <RuleCard key={`${row.en}-${i}`} rank={c.rank} suit={c.suit} />
