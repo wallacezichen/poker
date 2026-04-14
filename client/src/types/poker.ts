@@ -198,7 +198,7 @@ export interface ClientToServerEvents {
 export interface ServerToClientEvents {
   'room:updated': (room: Room) => void;
   'room:join_request': (req: JoinRequest) => void;
-  'room:join_approved': (payload: { room: Room; playerId: string; gameState?: GameState }) => void;
+  'room:join_approved': (payload: { room: Room; playerId: string; gameState?: GameState; chatHistory?: ChatMessage[] }) => void;
   'room:join_denied': (payload: { requestId: string; error?: string }) => void;
   'room:player_kicked': (payload: { roomId: string; reason?: string }) => void;
   'game:state': (state: GameState) => void;
@@ -222,4 +222,5 @@ export interface RoomResponse {
   room?: Room;
   playerId?: string;
   gameState?: GameState;
+  chatHistory?: ChatMessage[];
 }
