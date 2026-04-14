@@ -65,6 +65,25 @@ router.get('/:id/leaderboard', async (req: Request, res: Response) => {
   res.json(leaderboard);
 });
 
+// GET /api/rooms/:id/wins — Get wins count per player from hand_history
+router.get('/:id/wins', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { data, error } = await supabase
+    .from('hand_history')
+    .select('winners')
+    .eq('room_id', id.toUpperCase());
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  const wins: Record<string, number> = {};
+  for (const row of data ?? []) {
+    for (const w of (row.winners as Array<{ playerId: string }>) ?? []) {
+      wins[w.playerId] = (wins[w.playerId] || 0) + 1;
+    }
+  }
+  res.json(wins);
+});
+
 // GET /api/rooms/:id/chat — Get chat history
 router.get('/:id/chat', async (req: Request, res: Response) => {
   const { id } = req.params;

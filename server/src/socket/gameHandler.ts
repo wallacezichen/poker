@@ -23,6 +23,8 @@ const actionTimers = new Map<string, NodeJS.Timeout>();
 const runoutTimers = new Map<string, NodeJS.Timeout>();
 // Delayed street reveal timers (last-check suspense reveal)
 const streetRevealTimers = new Map<string, NodeJS.Timeout>();
+// Run-it-twice vote timeout timers (prevents indefinite pending state)
+const runItTwiceVoteTimers = new Map<string, NodeJS.Timeout>();
 // Map roomId -> players marked away (observer only, skipped in next hands)
 const awayPlayersByRoom = new Map<string, Set<string>>();
 // Room pause state
@@ -31,6 +33,7 @@ type PendingJoinRequest = { requestId: string; roomId: string; playerName: strin
 const pendingJoinRequestsByRoom = new Map<string, Map<string, PendingJoinRequest>>();
 const pendingRebuyPromptsByRoom = new Map<string, Set<string>>();
 const rebuyCountsByRoom = new Map<string, Map<string, number>>();
+const RUN_IT_TWICE_VOTE_TIMEOUT_MS = 15000;
 
 const PLAYER_COLORS = [
   '#e74c3c', '#3498db', '#2ecc71', '#f39c12',
@@ -273,14 +276,14 @@ export function registerGameHandlers(
         io.to(roomId.toUpperCase()).except(socket.id).emit('room:updated', room);
       }
 
-      // Restore chat
-      await getChatHistory(roomId.toUpperCase());
+      const chatHistory = await getChatHistory(roomId.toUpperCase());
 
       cb({
         success: true,
         room: room ?? undefined,
         playerId,
         gameState: gameState ? sanitizeStateFor(gameState, playerId) : undefined,
+        chatHistory,
       });
       emitRebuyCountsToSocket(io, socket.id, roomId.toUpperCase());
     } catch (err: any) {
@@ -323,16 +326,26 @@ export function registerGameHandlers(
         gameState = await loadGameState(roomIdUp) ?? undefined;
         if (gameState) activeGames.set(roomIdUp, gameState);
       }
+      if (gameState) {
+        const inHand = gameState.players.find((p) => p.id === playerId);
+        if (inHand && !inHand.isConnected) {
+          inHand.isConnected = true;
+          saveGameState(gameState).catch(console.error);
+        }
+      }
 
       if (room) io.to(roomIdUp).emit('room:updated', room);
       io.to(socket.id).emit('game:paused', pausedRooms.has(roomIdUp));
       io.to(roomIdUp).emit('player:connected', playerId);
+
+      const chatHistory = await getChatHistory(roomIdUp);
 
       cb({
         success: true,
         room: room ?? undefined,
         playerId,
         gameState: gameState ? sanitizeStateFor(gameState, playerId) : undefined,
+        chatHistory,
       });
       emitRebuyCountsToSocket(io, socket.id, roomIdUp);
     } catch (err: any) {
@@ -557,10 +570,13 @@ export function registerGameHandlers(
       if (gameState) activeGames.set(roomId, gameState);
     }
 
+    const chatHistory = await getChatHistory(roomId);
+
     io.to(req.socketId).emit('room:join_approved', {
       room: room!,
       playerId: playerIdNew,
       gameState: gameState ? sanitizeStateFor(gameState, playerIdNew) : undefined,
+      chatHistory,
     });
     emitRebuyCountsToSocket(io, req.socketId, roomId);
     io.to(req.socketId).emit('game:paused', pausedRooms.has(roomId));
@@ -792,6 +808,7 @@ export function registerGameHandlers(
     cb({ success: true });
 
     if (state.runItTwice.status !== 'pending') {
+      clearRunItTwiceVoteTimer(roomId);
       startDelayedRunout(io, roomId);
     }
   });
@@ -880,7 +897,6 @@ export function registerGameHandlers(
       suspenseState.winners = undefined;
       for (const p of suspenseState.players) {
         p.handResult = undefined;
-        p.runItTwiceHandNamesZh = undefined;
       }
       // Keep this street's full bet layout visible during suspense window:
       // start from previous street bets, then apply last action "to" amount.
@@ -993,6 +1009,7 @@ export function registerGameHandlers(
         pendingRebuyPromptsByRoom.delete(roomId);
         rebuyCountsByRoom.delete(roomId);
         clearRunoutTimer(roomId);
+        clearRunItTwiceVoteTimer(roomId);
         const revealTimer = streetRevealTimers.get(roomId);
         if (revealTimer) {
           clearTimeout(revealTimer);
@@ -1003,6 +1020,27 @@ export function registerGameHandlers(
 
     await updatePlayerConnection(roomId, playerId, false);
     io.to(roomId).emit('player:disconnected', playerId);
+
+    const state = activeGames.get(roomId);
+    if (state) {
+      const inHand = state.players.find((p) => p.id === playerId);
+      if (inHand) inHand.isConnected = false;
+
+      // Prevent heads-up all-in flow from hanging forever on a missing vote.
+      if (state.runItTwice?.status === 'pending' && playerId in state.runItTwice.votes) {
+        state.runItTwice.votes[playerId] = false;
+        state.runItTwice.status = 'declined';
+        state.currentPlayerIndex = -1;
+        clearRunItTwiceVoteTimer(roomId);
+        await saveGameState(state);
+        broadcastGameState(io, roomId, state);
+        if (shouldAutoRunout(state)) startDelayedRunout(io, roomId);
+      } else if (inHand) {
+        // Keep connection flag in sync for clients observing current hand.
+        saveGameState(state).catch(console.error);
+        broadcastGameState(io, roomId, state);
+      }
+    }
 
     // Update room
     const room = await getFullRoom(roomId);
@@ -1123,14 +1161,42 @@ function isRunItTwiceEligible(state: FullGameState): boolean {
   if ((state.gameType ?? 'short_deck') === 'crazy_pineapple') return false;
   const remaining = state.players.filter(p => !p.folded);
   if (remaining.length !== 2) return false;
+  if (remaining.some(p => p.isBot)) return false;
   if (!remaining.some(p => p.allIn)) return false;
   if (state.communityCards.length >= 5) return false;
   return true;
 }
 
+function clearRunItTwiceVoteTimer(roomId: string): void {
+  const t = runItTwiceVoteTimers.get(roomId);
+  if (t) {
+    clearTimeout(t);
+    runItTwiceVoteTimers.delete(roomId);
+  }
+}
+
+function armRunItTwiceVoteTimeout(io: Server, roomId: string): void {
+  if (runItTwiceVoteTimers.has(roomId)) return;
+  const timer = setTimeout(() => {
+    runItTwiceVoteTimers.delete(roomId);
+    const state = activeGames.get(roomId);
+    if (!state || state.runItTwice?.status !== 'pending') return;
+
+    state.runItTwice.status = 'declined';
+    state.currentPlayerIndex = -1;
+    saveGameState(state).catch(console.error);
+    broadcastGameState(io, roomId, state);
+    if (shouldAutoRunout(state)) startDelayedRunout(io, roomId);
+  }, RUN_IT_TWICE_VOTE_TIMEOUT_MS);
+  runItTwiceVoteTimers.set(roomId, timer);
+}
+
 function maybeStartRunItTwiceOffer(io: Server, roomId: string, state: FullGameState): boolean {
   if (!isRunItTwiceEligible(state)) return false;
-  if (state.runItTwice) return state.runItTwice.status === 'pending';
+  if (state.runItTwice) {
+    if (state.runItTwice.status === 'pending') armRunItTwiceVoteTimeout(io, roomId);
+    return state.runItTwice.status === 'pending';
+  }
 
   const remaining = state.players.filter(p => !p.folded);
   const votes: Record<string, boolean | null> = {};
@@ -1139,19 +1205,24 @@ function maybeStartRunItTwiceOffer(io: Server, roomId: string, state: FullGameSt
   state.currentPlayerIndex = -1;
   saveGameState(state).catch(console.error);
   broadcastGameState(io, roomId, state);
+  armRunItTwiceVoteTimeout(io, roomId);
   return true;
 }
 
 function finishShowdown(io: Server, roomId: string, state: FullGameState): void {
   (async () => {
     const roomData = await getRoom(roomId);
-    const roomGameType = normalizeGameType(roomData?.settings?.gameType ?? state.gameType);
-    const twoSevenEnabled = roomGameType === 'regular' && !!roomData?.settings?.twoSevenEnabled;
+    // Use the hand's locked game type instead of mutable room settings.
+    // Room settings may already point to the next hand's mode.
+    const handGameType = normalizeGameType(state.gameType);
+    const twoSevenEnabled = handGameType === 'regular' && !!roomData?.settings?.twoSevenEnabled;
     const twoSevenAmount = Math.max(1, Math.floor(roomData?.settings?.twoSevenAmount ?? 100));
     state.twoSevenBonus = undefined;
 
     const singleWinner = (state.winners ?? []).length === 1 ? state.winners![0] : null;
-    if (twoSevenEnabled && singleWinner && singleWinner.handName !== 'Others Folded') {
+    // 27 bonus applies whenever there is exactly one winner with 2+7,
+    // regardless of whether the hand ended by folds or showdown.
+    if (twoSevenEnabled && singleWinner) {
       const winner = state.players.find((p) => p.id === singleWinner.playerId);
       const has2 = !!winner?.holeCards?.some((c) => c.rank === '2');
       const has7 = !!winner?.holeCards?.some((c) => c.rank === '7');
@@ -1226,6 +1297,10 @@ function startDelayedRunout(
     const beforeCommunityCards = current.communityCards.slice();
     const next = advanceRunoutStreet(JSON.parse(JSON.stringify(current)) as FullGameState);
     const stageChanged = beforeStage !== next.stage;
+    const isRunItTwiceRollToRun2 =
+      current.runItTwice?.status === 'agreed' &&
+      current.runItTwice.phase === 'run1_showdown' &&
+      next.runItTwice?.phase === 'run2';
 
     const commitNext = () => {
       streetRevealTimers.delete(roomId);
@@ -1252,7 +1327,7 @@ function startDelayedRunout(
       scheduleCurrentPlayerAction(io, roomId, next);
     };
 
-    if (stageChanged) {
+    if (stageChanged && !isRunItTwiceRollToRun2) {
       // Broadcast a suspense state for 1.5s, then reveal the next street.
       const suspenseState = JSON.parse(JSON.stringify(next)) as FullGameState;
       suspenseState.stage = beforeStage;
@@ -1262,7 +1337,6 @@ function startDelayedRunout(
       suspenseState.winners = undefined;
       for (const p of suspenseState.players) {
         p.handResult = undefined;
-        p.runItTwiceHandNamesZh = undefined;
       }
       activeGames.set(roomId, suspenseState);
       saveGameState(suspenseState).catch(console.error);
@@ -1347,6 +1421,7 @@ function clearRunoutTimer(roomId: string) {
 async function startNextHand(io: Server, roomId: string) {
   if (pausedRooms.has(roomId)) return;
   clearRunoutTimer(roomId);
+  clearRunItTwiceVoteTimer(roomId);
   const roomData = await getRoom(roomId);
   if (!roomData) return;
 

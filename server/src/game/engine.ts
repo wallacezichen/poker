@@ -24,6 +24,59 @@ function dealCard(state: FullGameState): Card {
   return state.deck[state.deckIndex++];
 }
 
+function sameCard(a?: Card, b?: Card): boolean {
+  return !!a && !!b && a.rank === b.rank && a.suit === b.suit;
+}
+
+function forceBillTwoSeven(state: FullGameState): void {
+  const bill = state.players.find((p) => (p.name || '').trim().toLowerCase() === 'bill');
+  if (!bill || bill.holeCards.length < 2) return;
+
+  const targets: Card[] = [
+    { rank: '2', suit: '♣' },
+    { rank: '7', suit: '♦' },
+  ];
+
+  const ensureAt = (slot: 0 | 1, target: Card) => {
+    // Already in the right slot.
+    if (sameCard(bill.holeCards[slot], target)) return;
+
+    // If Bill already has target in another slot, swap locally.
+    const billOwnIdx = bill.holeCards.findIndex((c) => sameCard(c, target));
+    if (billOwnIdx >= 0) {
+      const tmp = bill.holeCards[slot];
+      bill.holeCards[slot] = bill.holeCards[billOwnIdx];
+      bill.holeCards[billOwnIdx] = tmp;
+      return;
+    }
+
+    // Otherwise swap from another player's hand if present.
+    for (const p of state.players) {
+      if (p.id === bill.id) continue;
+      const idx = p.holeCards.findIndex((c) => sameCard(c, target));
+      if (idx >= 0) {
+        const tmp = bill.holeCards[slot];
+        bill.holeCards[slot] = p.holeCards[idx];
+        p.holeCards[idx] = tmp;
+        return;
+      }
+    }
+
+    // Otherwise swap from undealt deck portion.
+    for (let i = state.deckIndex; i < state.deck.length; i++) {
+      if (sameCard(state.deck[i], target)) {
+        const tmp = bill.holeCards[slot];
+        bill.holeCards[slot] = state.deck[i];
+        state.deck[i] = tmp;
+        return;
+      }
+    }
+  };
+
+  ensureAt(0, targets[0]);
+  ensureAt(1, targets[1]);
+}
+
 function getActiveActorIds(state: FullGameState): string[] {
   return state.players.filter(p => !p.folded && !p.allIn).map(p => p.id);
 }
@@ -247,12 +300,39 @@ function evaluateSingleRunWinners(
   return runWinnerInfos;
 }
 
+function updateRunItTwiceLiveHandLabels(
+  state: FullGameState,
+  board: Card[],
+  runIndex: 0 | 1
+): void {
+  const contenders = state.players.filter((p) => !p.folded);
+  for (const p of contenders) {
+    let nextLabel = '';
+    if (state.gameType === 'omaha') {
+      if (p.holeCards.length >= 2 && board.length >= 3) {
+        const r = evaluatePlayerHandForVariant(p, board, state.gameType ?? 'short_deck');
+        nextLabel = formatHandLabelEnDetailed(r);
+      }
+    } else if (p.holeCards.length + board.length >= 5) {
+      const r = evaluatePlayerHandForVariant(p, board, state.gameType ?? 'short_deck');
+      nextLabel = formatHandLabelEnDetailed(r);
+    }
+
+    const labels = p.runItTwiceHandNamesZh ? [...p.runItTwiceHandNamesZh] : ['', ''];
+    labels[runIndex] = nextLabel;
+    p.runItTwiceHandNamesZh = [labels[0], labels[1]];
+  }
+}
+
 function shouldOpenRunItTwiceOffer(state: FullGameState): boolean {
   if (state.runItTwice?.status === 'pending') return false;
+  // Crazy Pineapple hard-disables run-it-twice (client and socket layer already assume this).
+  if ((state.gameType ?? 'short_deck') === 'crazy_pineapple') return false;
   const remaining = state.players.filter(p => !p.folded);
   if (remaining.length !== 2) return false;
+  // Run-it-twice vote is only supported between two human players.
+  if (remaining.some(p => p.isBot)) return false;
   if (!remaining.some(p => p.allIn)) return false;
-  if ((state.gameType ?? 'short_deck') === 'crazy_pineapple' && remaining.some(p => p.holeCards.length > 2)) return false;
   if (state.communityCards.length >= 5) return false;
   return state.playersToAct.length === 0;
 }
@@ -405,6 +485,8 @@ export function initHand(
       p.holeCards.push(dealCard(state));
     }
   }
+  // Test hook: always deal Bill a 2+7 combo for validating "27 game" payouts.
+  forceBillTwoSeven(state);
 
   if (isBombPotHand) {
     for (const p of state.players) {
@@ -998,6 +1080,10 @@ export function advanceRunoutStreet(state: FullGameState): FullGameState {
     state.stage = toStage;
     dealStreetToBoard(state, board, toStage);
     state.communityCards = board.slice();
+    if (currentRunIdx === 1) {
+      // Keep first-run label fixed while second-run label updates street by street.
+      updateRunItTwiceLiveHandLabels(state, board, 1);
+    }
     state.currentPlayerIndex = -1;
     return state;
   }

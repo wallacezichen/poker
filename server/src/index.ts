@@ -71,6 +71,8 @@ app.use((err: any, _req: any, _res: any, _next: any) => {
 });
 
 // Socket.IO
+const PING_INTERVAL_MS = Math.max(5_000, Math.floor(Number(process.env.SOCKET_PING_INTERVAL_MS || 25_000)));
+const PING_TIMEOUT_MS = Math.max(5_000, Math.floor(Number(process.env.SOCKET_PING_TIMEOUT_MS || 60_000)));
 const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
   cors: {
     origin: [CLIENT_URL, 'http://localhost:3000'],
@@ -78,14 +80,24 @@ const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     credentials: true,
   },
   transports: ['websocket', 'polling'],
+  // More tolerant for low-CPU instances/mobile networks to avoid "ping timeout" disconnects.
+  pingInterval: PING_INTERVAL_MS,
+  pingTimeout: PING_TIMEOUT_MS,
 });
 
 const HEARTBEAT_MS = Math.max(1_000, Math.floor(Number(process.env.PROC_HEARTBEAT_MS || 60_000)));
 const heartbeatTimer = setInterval(() => {
   const mu = process.memoryUsage();
   const uptimeSec = Math.floor(process.uptime());
+  const sockets = (() => {
+    try {
+      return io.sockets.sockets.size;
+    } catch {
+      return -1;
+    }
+  })();
   console.log(
-    `[PROC] heartbeat ts=${new Date().toISOString()} boot=${BOOT_ID} pid=${process.pid} uptimeSec=${uptimeSec} rssMB=${fmtMb(mu.rss)} heapUsedMB=${fmtMb(mu.heapUsed)} heapTotalMB=${fmtMb(mu.heapTotal)} externalMB=${fmtMb(mu.external)}`
+    `[PROC] heartbeat ts=${new Date().toISOString()} boot=${BOOT_ID} pid=${process.pid} uptimeSec=${uptimeSec} sockets=${sockets} rssMB=${fmtMb(mu.rss)} heapUsedMB=${fmtMb(mu.heapUsed)} heapTotalMB=${fmtMb(mu.heapTotal)} externalMB=${fmtMb(mu.external)}`
   );
 }, HEARTBEAT_MS);
 heartbeatTimer.unref();
@@ -206,5 +218,13 @@ httpServer.listen(PORT, HOST, () => {
   console.log(`   Platform: ${process.platform} ${process.arch}`);
   console.log(`   Hostname: ${os.hostname()}`);
   if (memLimit) console.log(`   CgroupMemoryLimitMB: ${fmtMb(memLimit)}`);
+  console.log(`   Socket pingIntervalMs: ${PING_INTERVAL_MS}`);
+  console.log(`   Socket pingTimeoutMs: ${PING_TIMEOUT_MS}`);
   console.log(`   Health: /health\n`);
+});
+
+// Engine.IO connection errors (handy when proxies/SSL cause handshake issues).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+(io.engine as any).on?.('connection_error', (err: any) => {
+  logProcLine(`[Socket][engine] connection_error boot=${BOOT_ID} pid=${process.pid} ts=${new Date().toISOString()} code=${err?.code || ''} msg=${err?.message || String(err)}`);
 });

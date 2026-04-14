@@ -40,10 +40,11 @@ A full-stack realtime multiplayer poker app with multiple game modes, host contr
 ### 27 Game
 
 - Host can enable and configure amount per other player.
-- At showdown, bonus triggers only if:
+- Bonus triggers if:
   - exactly one winner, and
   - that winner’s hole cards include both `2` and `7`, and
   - it is not a split pot.
+- Hand can end either by folds or showdown.
 - Other players auto-pay the configured amount (capped by their remaining chips), then total is awarded to that winner.
 
 ## Rules Notes by Mode
