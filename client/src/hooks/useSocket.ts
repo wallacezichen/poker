@@ -21,7 +21,7 @@ export function getSocket() {
 export function useSocket() {
   const {
     setConnected, setRoom, setMyPlayerId,
-    setGameState, setHandResult, addChatMessage,
+    setGameState, setHandResult, addChatMessage, setChatMessages,
     setShowHandResult, setGamePaused, addJoinRequest, removeJoinRequest, clearJoinRequests, setJoinPending, setRebuyPrompt, addRebuyBadgePlayer, setRebuyCountMap,
   } = useGameStore();
 
@@ -48,6 +48,7 @@ export function useSocket() {
             setRoom(res.room);
             setMyPlayerId(res.playerId);
             if (res.gameState) setGameState(res.gameState);
+            if (res.chatHistory) setChatMessages(res.chatHistory);
             const me = res.room.players.find((p) => p.id === res.playerId);
             saveRoomIdentity(res.room.id, res.playerId, me?.name);
           } else if (res.error) {
@@ -74,10 +75,11 @@ export function useSocket() {
 
     s.on('room:updated', (room) => setRoom(room));
     s.on('room:join_request', (req) => addJoinRequest(req));
-    s.on('room:join_approved', ({ room, playerId, gameState }) => {
+    s.on('room:join_approved', ({ room, playerId, gameState, chatHistory }) => {
       setRoom(room);
       setMyPlayerId(playerId);
       if (gameState) setGameState(gameState);
+      if (chatHistory) setChatMessages(chatHistory);
       const me = room.players.find((p) => p.id === playerId);
       saveRoomIdentity(room.id, playerId, me?.name);
       setJoinPending(null);
@@ -349,6 +351,7 @@ export function useSocket() {
           setRoom(res.room);
           setMyPlayerId(res.playerId);
           if (res.gameState) setGameState(res.gameState);
+          if (res.chatHistory) setChatMessages(res.chatHistory);
           saveRoomIdentity(res.room.id, res.playerId, playerName);
           setJoinPending(null);
           resolve({ success: true });
@@ -369,6 +372,7 @@ export function useSocket() {
           setRoom(res.room);
           setMyPlayerId(res.playerId);
           if (res.gameState) setGameState(res.gameState);
+          if (res.chatHistory) setChatMessages(res.chatHistory);
           const me = res.room.players.find((p) => p.id === res.playerId);
           saveRoomIdentity(res.room.id, res.playerId, me?.name);
           setJoinPending(null);
@@ -419,7 +423,7 @@ export function useSocket() {
     });
   }
 
-  function updateRoomSettings(settings: Partial<Pick<RoomSettings, 'smallBlind' | 'bigBlind' | 'bombPotEnabled' | 'bombPotAmount' | 'bombPotInterval' | 'twoSevenEnabled' | 'twoSevenAmount'>>) {
+  function updateRoomSettings(settings: Partial<Pick<RoomSettings, 'smallBlind' | 'bigBlind' | 'bombPotEnabled' | 'bombPotAmount' | 'bombPotInterval' | 'twoSevenEnabled' | 'twoSevenAmount' | 'gameType'>>) {
     return new Promise<{ success: boolean; error?: string }>((resolve) => {
       getSocket().emit('room:update_settings', { settings }, (res) => resolve(res));
     });

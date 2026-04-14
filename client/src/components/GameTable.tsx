@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { GameState, Room, JoinRequest } from '../types/poker';
+import { GameState, Room, JoinRequest, GameType } from '../types/poker';
 import Card from './Card';
 import PlayerSeat from './PlayerSeat';
 import { useGameStore } from '../store/gameStore';
@@ -22,6 +22,9 @@ const SEAT_POSITIONS: Array<{ top: string; left: string }> = [
   { top: '75%', left: '88%' },   // 7 - bottom right
   { top: '50%', left: '50%' },   // 8 - center (overflow)
 ];
+const TWO_SEVEN_STEP_MS = 3000;
+const TWO_SEVEN_AWARD_DELAY_MS = 300;
+const TWO_SEVEN_AWARD_HOLD_MS = 1800;
 
 function formatChips(n: number): string {
   return String(n);
@@ -85,16 +88,22 @@ function communityCountForStage(stage?: GameState['stage']): number {
   return 0;
 }
 
+function normalizeGameType(raw?: string): GameType {
+  if (raw === 'regular' || raw === 'omaha' || raw === 'crazy_pineapple' || raw === 'short_deck') return raw;
+  return 'short_deck';
+}
+
 interface GameTableProps {
   gameState: GameState;
   room: Room;
+  roomId: string;
   myPlayerId: string;
   onAction: (action: any, amount?: number) => void;
   onSendChat: (msg: string) => void;
   onSetAway: (away: boolean) => void;
   onJoinRequestDecision: (requestId: string, approve: boolean, buyIn?: number) => void;
   onHostManagePlayer: (targetPlayerId: string, action: 'set_chips' | 'kick', chips?: number) => Promise<{ success: boolean; error?: string }>;
-  onUpdateRoomSettings: (settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number }>) => Promise<{ success: boolean; error?: string }>;
+  onUpdateRoomSettings: (settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number; gameType: string }>) => Promise<{ success: boolean; error?: string }>;
   onSetPause: (paused: boolean) => void;
   onNextHand: () => void;
   onRevealCards: (count: 1 | 2 | 3) => Promise<{ success: boolean; error?: string } | void>;
@@ -105,7 +114,7 @@ interface GameTableProps {
 }
 
 export default function GameTable({
-  gameState, room, myPlayerId,
+  gameState, room, roomId, myPlayerId,
   onAction, onSendChat, onSetAway, onJoinRequestDecision, onHostManagePlayer, onUpdateRoomSettings, onSetPause, onNextHand, onRevealCards, onRevealDeadBoard, onRunItTwiceVote, onEndSession, onLeave
 }: GameTableProps) {
   const { t, locale, setLocale } = useI18n();
@@ -123,6 +132,14 @@ export default function GameTable({
   const [raiseAmount, setRaiseAmount] = useState(0);
   const [chatInput, setChatInput] = useState('');
   const [winsByPlayer, setWinsByPlayer] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000').replace(/\/$/, '');
+    fetch(`${base}/api/rooms/${roomId}/wins`)
+      .then(r => r.ok ? r.json() : {})
+      .then(data => setWinsByPlayer(data))
+      .catch(() => {});
+  }, [roomId]);
   const [showRaisePanel, setShowRaisePanel] = useState(false);
   const [uiScale, setUiScale] = useState(1);
   const [showRulesModal, setShowRulesModal] = useState(false);
@@ -164,6 +181,29 @@ export default function GameTable({
   const twoSevenAnimHandRef = useRef<number>(0);
   const optimisticBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentActionBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activeGameType, setActiveGameType] = useState<GameType>(() => normalizeGameType(gameState.gameType ?? room.settings.gameType));
+  const handTypeLockRef = useRef<{ handNumber: number; gameType: GameType }>({
+    handNumber: gameState.handNumber,
+    gameType: normalizeGameType(gameState.gameType ?? room.settings.gameType),
+  });
+
+  useEffect(() => {
+    const fromState = gameState.gameType ? normalizeGameType(gameState.gameType) : null;
+    const configured = normalizeGameType(room.settings.gameType);
+    const handChanged = gameState.handNumber !== handTypeLockRef.current.handNumber;
+
+    // Lock variant per-hand. If state carries gameType, trust it; otherwise only refresh on hand switch.
+    if (fromState) {
+      handTypeLockRef.current = { handNumber: gameState.handNumber, gameType: fromState };
+      setActiveGameType(fromState);
+      return;
+    }
+
+    if (handChanged || gameState.stage === 'waiting') {
+      handTypeLockRef.current = { handNumber: gameState.handNumber, gameType: configured };
+      setActiveGameType(configured);
+    }
+  }, [gameState.gameType, gameState.handNumber, gameState.stage, room.settings.gameType]);
 
   // Find my player
   const myPlayer = gameState.players.find(p => p.id === myPlayerId);
@@ -188,8 +228,8 @@ export default function GameTable({
     }
     return ids;
   }, [gameState.bombPot?.active, gameState.players, gameState.bigBlindIndex]);
-  const isDiscardStage = gameState.stage === 'flop_discard' && (room.settings.gameType ?? 'short_deck') === 'crazy_pineapple';
-  const isRegularGame = (room.settings.gameType ?? 'short_deck') === 'regular';
+  const isDiscardStage = gameState.stage === 'flop_discard' && activeGameType === 'crazy_pineapple';
+  const isRegularGame = activeGameType === 'regular';
   const isMyTurn = gameState.players[gameState.currentPlayerIndex]?.id === myPlayerId;
   const canAct =
     isMyTurn &&
@@ -203,15 +243,40 @@ export default function GameTable({
     canAct &&
     isDiscardStage &&
     (myPlayer?.holeCards?.length ?? 0) > 2;
+  const twoSevenBonusLive = gameState.twoSevenBonus;
+  const twoSevenCollectedLive = twoSevenBonusLive?.collectedFrom || [];
   const displayedPot = useMemo(() => {
-    if (!bombIntroRunning || !gameState.bombPot?.active) return gameState.pot;
-    const visibleCount = Math.min(bombIntroStep + 1, bombIntroOrderIds.length);
-    let total = 0;
-    for (let i = 0; i < visibleCount; i++) {
-      total += bombAnteByPlayerId.get(bombIntroOrderIds[i]) || 0;
+    if (bombIntroRunning && gameState.bombPot?.active) {
+      const visibleCount = Math.min(bombIntroStep + 1, bombIntroOrderIds.length);
+      let total = 0;
+      for (let i = 0; i < visibleCount; i++) {
+        total += bombAnteByPlayerId.get(bombIntroOrderIds[i]) || 0;
+      }
+      return total;
     }
-    return total;
-  }, [bombIntroRunning, gameState.bombPot?.active, gameState.pot, bombIntroStep, bombIntroOrderIds, bombAnteByPlayerId]);
+
+    if (twoSevenAnimRunning && twoSevenBonusLive) {
+      return gameState.pot + Number(twoSevenBonusLive.total || 0);
+    }
+
+    if (twoSevenBonusLive) {
+      return gameState.pot + Number(twoSevenBonusLive.total || 0);
+    }
+
+    return gameState.pot;
+  }, [
+    bombIntroRunning,
+    gameState.bombPot?.active,
+    gameState.pot,
+    bombIntroStep,
+    bombAnteByPlayerId,
+    bombIntroOrderIds,
+    twoSevenAnimRunning,
+    twoSevenAnimPhase,
+    twoSevenAnimStep,
+    twoSevenBonusLive,
+    twoSevenCollectedLive,
+  ]);
 
   // Reorder players so my seat is at position 0
   const inHandById = new Map(gameState.players.map((p, idx) => [p.id, { player: p, idx }]));
@@ -235,20 +300,36 @@ export default function GameTable({
   const potAfterCall = gameState.pot + callAmt;
   const presetRaiseTo = (fraction: number) =>
     Math.floor(gameState.currentBet + potAfterCall * fraction);
-  const recentChat = chatMessages.slice(-3);
+  const visibleChat = chatMessages;
   const ownerName = room.players.find(p => p.id === room.hostId)?.name || 'HOST';
-  const gameTypeLabel = room.settings.gameType === 'regular'
+  // activeGameType: the game type currently in play (locked at hand start)
+  // room.settings.gameType: what the NEXT hand will use (may differ if host changed mid-hand)
+  const pendingGameType = normalizeGameType(room.settings.gameType) !== activeGameType
+    ? normalizeGameType(room.settings.gameType)
+    : null;
+  const gameTypeLabel = activeGameType === 'regular'
     ? t('game.regular.title')
-    : room.settings.gameType === 'omaha'
+    : activeGameType === 'omaha'
       ? t('game.omaha.title')
-      : room.settings.gameType === 'crazy_pineapple'
+      : activeGameType === 'crazy_pineapple'
         ? t('game.crazy_pineapple.title')
         : t('game.short_deck.title');
+  const pendingGameTypeLabel = pendingGameType === 'regular'
+    ? t('game.regular.title')
+    : pendingGameType === 'omaha'
+      ? t('game.omaha.title')
+      : pendingGameType === 'crazy_pineapple'
+        ? t('game.crazy_pineapple.title')
+        : pendingGameType === 'short_deck'
+          ? t('game.short_deck.title')
+          : null;
   const meInRoom = room.players.find(p => p.id === myPlayerId);
   const isAway = !!meInRoom?.isAway;
-  const isCrazyPineapple = room.settings.gameType === 'crazy_pineapple';
+  const isCrazyPineapple = activeGameType === 'crazy_pineapple';
   // Crazy Pineapple: never offer/visualize "Run it twice" (client hard-disable).
   const runItTwice = isCrazyPineapple ? undefined : gameState.runItTwice;
+  const hideLiveHandLabelDuringRunItTwice =
+    runItTwice?.status === 'agreed' && runItTwice.phase !== 'final';
   const winnerSource = (showHandResult ? handResult?.winners : undefined) || gameState.winners || [];
   const runWinnerIds = (() => {
     const rs = runItTwice?.runResults || [];
@@ -348,11 +429,11 @@ export default function GameTable({
       const t = setTimeout(() => {
         setTwoSevenAnimStep(idx);
         playBetSound();
-      }, idx * 1000);
+      }, idx * TWO_SEVEN_STEP_MS);
       twoSevenAnimTimersRef.current.push(t);
     });
 
-    const awardStart = twoSevenCollected.length * 1000 + 300;
+    const awardStart = twoSevenCollected.length * TWO_SEVEN_STEP_MS + TWO_SEVEN_AWARD_DELAY_MS;
     const awardTimer = setTimeout(() => {
       setTwoSevenAnimPhase('award');
       playBetSound();
@@ -363,7 +444,7 @@ export default function GameTable({
       setTwoSevenAnimRunning(false);
       setTwoSevenAnimPhase(null);
       twoSevenAnimTimersRef.current = [];
-    }, awardStart + 1200);
+    }, awardStart + TWO_SEVEN_AWARD_HOLD_MS);
     twoSevenAnimTimersRef.current.push(finishTimer);
 
     return () => {
@@ -445,6 +526,35 @@ export default function GameTable({
       setOptionsToast(null);
       optionsToastTimerRef.current = null;
     }, 2000);
+  }
+
+  async function handleGameTypeChange(rawType: string) {
+    const nextGameType = normalizeGameType(rawType);
+    const currentSetting = normalizeGameType(room.settings.gameType);
+    if (nextGameType === currentSetting) return;
+
+    const res = await onUpdateRoomSettings({ gameType: nextGameType });
+    if (!res.success) {
+      showOptionsToast('error', res.error || t('table.options.save_failed'));
+      return;
+    }
+
+    const nextLabel = nextGameType === 'regular'
+      ? t('game.regular.title')
+      : nextGameType === 'omaha'
+        ? t('game.omaha.title')
+        : nextGameType === 'crazy_pineapple'
+          ? t('game.crazy_pineapple.title')
+          : t('game.short_deck.title');
+    const handInProgress = gameState.handNumber > 0 && gameState.stage !== 'waiting';
+    const text = handInProgress
+      ? (locale === 'zh'
+          ? `已切换为 ${nextLabel}，将在下一把生效（当前这把不变）。`
+          : `Switched to ${nextLabel}. It will take effect next hand; current hand is unchanged.`)
+      : (locale === 'zh'
+          ? `已切换为 ${nextLabel}。`
+          : `Switched to ${nextLabel}.`);
+    showOptionsToast('success', text);
   }
 
   useEffect(() => {
@@ -778,10 +888,30 @@ export default function GameTable({
         >
         <div className="absolute top-4 right-4 z-30 text-right pr-1">
           <div className="inline-block rounded-md border border-white/20 bg-black/45 px-2 py-1 text-sm font-semibold tracking-wide text-amber-200">
-            {gameTypeLabel}
+            {isHost ? (
+              <select
+                value={room.settings.gameType ?? 'short_deck'}
+                onChange={(e) => {
+                  void handleGameTypeChange(e.target.value);
+                }}
+                className="bg-transparent text-amber-200 text-sm font-semibold outline-none cursor-pointer"
+              >
+                <option value="short_deck">短牌 Short Deck</option>
+                <option value="regular">德州 Texas Hold'em</option>
+                <option value="omaha">奥马哈 Omaha</option>
+                <option value="crazy_pineapple">菠萝 Crazy Pineapple</option>
+              </select>
+            ) : (
+              gameTypeLabel
+            )}
           </div>
+          {pendingGameTypeLabel && (
+            <div className="mt-1 inline-block rounded-md border border-yellow-400/40 bg-yellow-900/50 px-2 py-0.5 text-xs text-yellow-300">
+              ⏭ 下一把: {pendingGameTypeLabel}
+            </div>
+          )}
           <div className="mt-1 text-sm font-semibold tracking-wide text-gray-300">Owner: {ownerName}</div>
-          <div className="mt-1 text-sm font-semibold tracking-wide text-gray-300">NLH ~ 10 / 20</div>
+          <div className="mt-1 text-sm font-semibold tracking-wide text-gray-300">{room.settings.smallBlind} / {room.settings.bigBlind}</div>
         </div>
 
         <button
@@ -1110,7 +1240,7 @@ export default function GameTable({
 
         {showRulesModal && (
           <RulesModal
-            gameType={room.settings.gameType ?? 'short_deck'}
+            gameType={activeGameType}
             onClose={() => setShowRulesModal(false)}
           />
         )}
@@ -1261,8 +1391,13 @@ export default function GameTable({
             <div className="absolute top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
               <div className="flex items-center gap-2">
                 <div className="px-14 py-1 rounded-full bg-black/18 border border-black/15 font-semibold text-4xl">
-                  {formatChips(displayedPot)}
+                  {twoSevenBonusLive ? formatChips(gameState.pot) : formatChips(displayedPot)}
                 </div>
+                {twoSevenBonusLive && (
+                  <div className="rounded-full bg-red-700 border-2 border-red-300/80 px-4 py-1 text-2xl font-extrabold text-white shadow-[0_12px_28px_rgba(127,29,29,0.55)]">
+                    +{formatChips(Number(twoSevenBonusLive.total || 0))}
+                  </div>
+                )}
                 {gameState.bombPot?.active && (
                   <div className="flex items-center gap-1 rounded-full bg-rose-900/70 border border-rose-200/40 px-3 py-1">
                     <span className="text-sm font-extrabold tracking-wide text-rose-100">💣 BOMB POT</span>
@@ -1501,7 +1636,7 @@ export default function GameTable({
               bet: 0,
               totalBet: 0,
               holeCards: [],
-              holeCardCount: room.settings.gameType === 'omaha' ? 4 : room.settings.gameType === 'crazy_pineapple' ? 3 : 2,
+              holeCardCount: activeGameType === 'omaha' ? 4 : activeGameType === 'crazy_pineapple' ? 3 : 2,
               folded: false,
               allIn: false,
               isBot: roomPlayer.isBot,
@@ -1541,6 +1676,10 @@ export default function GameTable({
                   winsCount={winsByPlayer[roomPlayer.id] || 0}
                   statusText={!inHand ? (roomPlayer.isAway ? 'AWAY' : 'WAIT NEXT HAND') : undefined}
                   showCheckBubble={checkBubblePlayers.has(roomPlayer.id)}
+                  hideLiveHandLabel={
+                    (bombIntroRunning && !!gameState.bombPot?.active && gameState.stage === 'flop') ||
+                    hideLiveHandLabelDuringRunItTwice
+                  }
                   autoPostActive={
                     (bombIntroRunning &&
                       gameState.bombPot?.active &&
@@ -1548,51 +1687,48 @@ export default function GameTable({
                     (!!optimisticBetBubble &&
                       roomPlayer.id === optimisticBetBubble.playerId) ||
                     (!!recentActionBetBubble &&
-                      roomPlayer.id === recentActionBetBubble.playerId) ||
-                    (twoSevenAnimRunning &&
-                      twoSevenAnimPhase === 'collect' &&
-                      roomPlayer.id === twoSevenCurrentCollectEntry?.playerId) ||
-                    (twoSevenAnimRunning &&
-                      twoSevenAnimPhase === 'award' &&
-                      !!twoSevenBonus &&
-                      roomPlayer.id === twoSevenBonus.winnerId)
+                      roomPlayer.id === recentActionBetBubble.playerId)
                   }
                   autoPostAmount={
                     bombIntroRunning &&
                     gameState.bombPot?.active &&
                     roomPlayer.id === bombIntroOrderIds[Math.min(bombIntroStep, Math.max(0, bombIntroOrderIds.length - 1))]
                       ? Number(gameState.bombPot?.amount || 0)
-                      : twoSevenAnimRunning &&
-                          twoSevenAnimPhase === 'collect' &&
-                          roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
-                        ? Number(twoSevenCurrentCollectEntry?.amount || 0)
-                        : optimisticBetBubble &&
+                      : optimisticBetBubble &&
                             roomPlayer.id === optimisticBetBubble.playerId
                           ? Number(optimisticBetBubble.amount || 0)
                         : recentActionBetBubble &&
                             roomPlayer.id === recentActionBetBubble.playerId
                           ? Number(recentActionBetBubble.amount || 0)
-                        : twoSevenAnimRunning &&
-                            twoSevenAnimPhase === 'award' &&
-                            !!twoSevenBonus &&
-                            roomPlayer.id === twoSevenBonus.winnerId
-                          ? Number(twoSevenBonus.total || 0)
                           : undefined
                   }
-                  gameType={room.settings.gameType ?? 'short_deck'}
+                  bonusBubbleActive={
+                    twoSevenAnimRunning &&
+                    twoSevenAnimPhase === 'collect' &&
+                    roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
+                  }
+                  bonusBubbleAmount={
+                    twoSevenAnimRunning &&
+                    twoSevenAnimPhase === 'collect' &&
+                    roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
+                      ? Number(twoSevenCurrentCollectEntry?.amount || 0)
+                      : undefined
+                  }
+                  gameType={activeGameType}
                 />
               </div>
             );
           })}
         </div>
       </div>
-	        <div className="absolute bottom-2 left-2 md:left-3 z-20 w-[330px] md:w-[470px]">
+
+        <div className="absolute bottom-2 left-2 md:left-3 z-20 w-[330px] md:w-[470px]">
 	          <div className="rounded-lg border border-white/15 bg-black/35 p-2">
 	            <div className="text-xs text-white/60 mb-1">{t('table.log.title')}</div>
-	            <div className="space-y-1 min-h-[64px]">
-	              {recentChat.length === 0 && <div className="text-xs text-white/45">{t('chat.none_short')}</div>}
-	              {recentChat.map(msg => (
-	                <div key={msg.id} className="text-sm text-white/85 truncate">
+	            <div className="space-y-1 h-[64px] overflow-y-auto pr-1">
+	              {visibleChat.length === 0 && <div className="text-xs text-white/45">{t('chat.none_short')}</div>}
+	              {visibleChat.map(msg => (
+	                <div key={msg.id} className="text-sm text-white/85 break-words">
 	                  <span className="text-emerald-300">{msg.playerName}: </span>{msg.message}
 	                </div>
 	              ))}

@@ -17,10 +17,20 @@ export default function ChatPanel({ messages, myPlayerId, onSend, isOpen, onTogg
   const { t } = useI18n();
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isOpen) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isOpen]);
+    if (!isOpen) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (isNearBottom) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Scroll to bottom when panel first opens
+  useEffect(() => {
+    if (isOpen) bottomRef.current?.scrollIntoView({ behavior: 'instant' });
+  }, [isOpen]);
 
   function handleSend() {
     const trimmed = input.trim();
@@ -46,7 +56,7 @@ export default function ChatPanel({ messages, myPlayerId, onSend, isOpen, onTogg
         </div>
 
         {/* Messages */}
-        <div className="h-52 overflow-y-auto px-3 py-2 space-y-1.5">
+        <div ref={scrollRef} className="h-52 overflow-y-auto px-3 py-2 space-y-1.5">
           {messages.length === 0 && (
             <p className="text-xs text-white/30 text-center mt-8">{t('chat.empty')}</p>
           )}

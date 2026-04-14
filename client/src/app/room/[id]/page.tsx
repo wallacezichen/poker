@@ -373,6 +373,7 @@ export default function RoomPage() {
       <GameTable
         gameState={gameState}
         room={room}
+        roomId={roomId}
         myPlayerId={myPlayerId || ''}
         onAction={handleAction}
         onSendChat={sendChat}

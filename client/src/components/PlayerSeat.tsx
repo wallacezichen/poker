@@ -22,7 +22,10 @@ interface PlayerSeatProps {
   showCheckBubble?: boolean;
   autoPostAmount?: number;
   autoPostActive?: boolean;
+  bonusBubbleAmount?: number;
+  bonusBubbleActive?: boolean;
   gameType?: GameType;
+  hideLiveHandLabel?: boolean;
 }
 
 function formatChips(n: number): string {
@@ -36,9 +39,10 @@ function cardKey(card?: CardType): string {
 
 export default function PlayerSeat({
   player, isDealer, isSmallBlind, isBigBlind,
-  isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false, autoPostAmount, autoPostActive = false, gameType = 'short_deck',
+  isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false, autoPostAmount, autoPostActive = false, bonusBubbleAmount, bonusBubbleActive = false, gameType = 'short_deck', hideLiveHandLabel = false,
 }: PlayerSeatProps) {
   const { t } = useI18n();
+  const bonusBubbleDisplayAmount = Math.abs(Number(bonusBubbleAmount ?? 0));
   const expectedHoleCount =
     gameType === 'omaha'
       ? 4
@@ -67,7 +71,7 @@ export default function PlayerSeat({
   } else {
     displayCards = new Array(expectedHoleCount).fill(undefined);
   }
-  const liveBest = isMe ? evaluateBestHandName([...player.holeCards, ...communityCards], gameType) : '';
+  const liveBest = (isMe && !hideLiveHandLabel) ? evaluateBestHandName([...player.holeCards, ...communityCards], gameType) : '';
   const handLabel = player.handResult ? formatHandLabelEnDetailed(player.handResult) : liveBest;
   // Crazy Pineapple hard-disables "Run it twice", so ignore any stale labels.
   const runItTwiceLabels = gameType === 'crazy_pineapple' ? undefined : player.runItTwiceHandNamesZh;
@@ -163,9 +167,18 @@ export default function PlayerSeat({
             </div>
           )}
 
-          {!showCheckBubble && (autoPostActive || player.bet > 0) && (
-            <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-lime-300 text-black rounded-full w-12 h-12 text-xl font-bold flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.35)]">
-              {formatChips(autoPostActive ? (autoPostAmount ?? 0) : player.bet)}
+          {!showCheckBubble && (autoPostActive || player.bet > 0 || bonusBubbleActive) && (
+            <div className="absolute -top-12 left-1/2 -translate-x-1/2 flex items-center gap-2">
+              {(autoPostActive || player.bet > 0) && (
+                <div className="bg-lime-300 text-black rounded-full w-12 h-12 text-xl font-bold flex items-center justify-center shadow-[0_8px_20px_rgba(0,0,0,0.35)]">
+                  {formatChips(autoPostActive ? (autoPostAmount ?? 0) : player.bet)}
+                </div>
+              )}
+              {bonusBubbleActive && (
+                <div className="rounded-full px-3 h-12 bg-red-600 text-white border-2 border-red-200 text-sm font-extrabold tracking-wide flex items-center justify-center shadow-[0_10px_24px_rgba(220,38,38,0.55)] whitespace-nowrap">
+                  {formatChips(bonusBubbleDisplayAmount)}
+                </div>
+              )}
             </div>
           )}
           {showCheckBubble && (
