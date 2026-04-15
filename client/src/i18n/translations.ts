@@ -229,6 +229,10 @@ export const translations: Record<Locale, Dict> = {
     'table.sound.off': 'Off',
     'table.log.title': 'LOG',
     'table.rit.title': 'RUN IT TWICE?',
+    'table.throw.egg': 'Egg',
+    'table.throw.tomato': 'Tomato',
+    'table.throw.fish': 'Fish',
+    'table.throw.manage': 'Manage',
   },
   zh: {
     // Common
@@ -454,5 +458,9 @@ export const translations: Record<Locale, Dict> = {
     'table.sound.off': '关',
     'table.log.title': '日志',
     'table.rit.title': '跑两次？',
+    'table.throw.egg': '扔鸡蛋',
+    'table.throw.tomato': '扔番茄',
+    'table.throw.fish': '扔鱼',
+    'table.throw.manage': '管理',
   },
 };

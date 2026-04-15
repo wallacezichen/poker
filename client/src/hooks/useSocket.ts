@@ -174,6 +174,10 @@ export function useSocket() {
       if (shouldClientSuspense && prev) {
         if (streetRevealDelayRef.current) clearTimeout(streetRevealDelayRef.current);
         delayedStateRef.current = state;
+        const keepRunItTwiceLabels = state.runItTwice?.status === 'agreed';
+        const prevRunLabelsById = new Map(
+          prev.players.map((p) => [p.id, p.runItTwiceHandNamesZh])
+        );
         const prevBetById = new Map(prev.players.map((p) => [p.id, p.bet]));
         const suspensePlayers = state.players.map((p) => ({
           ...p,
@@ -199,7 +203,17 @@ export function useSocket() {
         };
         for (const p of suspenseState.players) {
           p.handResult = undefined;
-          p.runItTwiceHandNamesZh = undefined;
+          if (keepRunItTwiceLabels) {
+            const hasCurrent = !!p.runItTwiceHandNamesZh?.some((line) => !!line);
+            if (!hasCurrent) {
+              const prevLines = prevRunLabelsById.get(p.id);
+              if (prevLines?.some((line) => !!line)) {
+                p.runItTwiceHandNamesZh = [prevLines[0] || '', prevLines[1] || ''];
+              }
+            }
+          } else {
+            p.runItTwiceHandNamesZh = undefined;
+          }
         }
         applyIncomingState(suspenseState);
         streetRevealDelayRef.current = setTimeout(() => {
@@ -457,7 +471,7 @@ export function useSocket() {
     });
   }
 
-  function revealCards(slot: 1 | 2 | 3) {
+  function revealCards(slot: 1 | 2 | 3 | 4) {
     return new Promise<{ success: boolean; error?: string }>((resolve) => {
       getSocket().emit('game:reveal_cards', { slot }, (res) => resolve(res));
     });

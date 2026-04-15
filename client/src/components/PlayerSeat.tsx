@@ -58,9 +58,14 @@ export default function PlayerSeat({
   if (isMe) {
     displayCards = [...(player.holeCards || [])];
     if (displayCards.length === 0) displayCards = new Array(expectedHoleCount).fill(undefined);
-  } else if (expectedHoleCount === 3 && player.publicHoleCards) {
+  } else if (expectedHoleCount >= 3 && player.publicHoleCards) {
     displayCards = player.publicHoleCards.map((c) => (c ?? undefined));
-    if (displayCards.length < 3) displayCards = [...displayCards, ...new Array(3 - displayCards.length).fill(undefined)];
+    if (displayCards.length < expectedHoleCount) {
+      displayCards = [...displayCards, ...new Array(expectedHoleCount - displayCards.length).fill(undefined)];
+    }
+    if (displayCards.length > expectedHoleCount) {
+      displayCards = displayCards.slice(0, expectedHoleCount);
+    }
   } else if (mask === 1) {
     displayCards = [player.holeCards?.[0], undefined];
   } else if (mask === 2) {
@@ -204,10 +209,10 @@ export default function PlayerSeat({
           {handLabel}
         </div>
       )}
-      {runItTwiceLabels && runItTwiceLabels.length === 2 && !player.folded && canSeeHandLabel && (
+      {runItTwiceLabels && runItTwiceLabels.length === 2 && !player.folded && canSeeHandLabel && (runItTwiceLabels[0] || runItTwiceLabels[1]) && (
         <div className="mt-1 text-center text-[0.85rem] font-semibold text-yellow-200 tracking-wide leading-tight">
-          <div>{runItTwiceLabels[0]}</div>
-          <div>{runItTwiceLabels[1]}</div>
+          {runItTwiceLabels[0] && <div>{runItTwiceLabels[0]}</div>}
+          {runItTwiceLabels[1] && <div>{runItTwiceLabels[1]}</div>}
         </div>
       )}
       {statusText && (

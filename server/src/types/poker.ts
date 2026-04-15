@@ -15,6 +15,7 @@ export interface Card {
 export type GameStage = 'waiting' | 'preflop' | 'flop' | 'flop_discard' | 'turn' | 'river' | 'showdown';
 export type RoomStatus = 'waiting' | 'playing' | 'finished';
 export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'allin' | 'discard';
+export type ThrowEmoteType = 'egg' | 'tomato' | 'fish';
 
 export interface PlayerState {
   id: string;
@@ -172,7 +173,7 @@ export interface ClientToServerEvents {
   'room:join_request_decision': (payload: { requestId: string; approve: boolean; buyIn?: number }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:pause': (payload: { paused: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:start': (cb: (res: { success: boolean; error?: string }) => void) => void;
-  'game:reveal_cards': (payload: { slot: 1 | 2 | 3 }, cb: (res: { success: boolean; error?: string }) => void) => void;
+  'game:reveal_cards': (payload: { slot: 1 | 2 | 3 | 4 }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:reveal_dead_board': (cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:run_it_twice_vote': (payload: { agree: boolean }, cb: (res: { success: boolean; error?: string }) => void) => void;
   'game:rebuy_or_leave': (
@@ -180,6 +181,7 @@ export interface ClientToServerEvents {
     cb: (res: { success: boolean; error?: string }) => void
   ) => void;
   'game:action': (payload: { action: ActionType; amount?: number }, cb: (res: { success: boolean; error?: string }) => void) => void;
+  'game:throw_emote': (payload: { toPlayerId: string; type: ThrowEmoteType }) => void;
   'chat:send': (payload: { message: string }) => void;
   'game:next_hand': () => void;
 }
@@ -198,6 +200,7 @@ export interface ServerToClientEvents {
   'game:hand_result': (result: HandResultPayload) => void;
   'game:player_rebuy': (payload: { playerId: string }) => void;
   'game:rebuy_counts': (payload: { counts: Record<string, number> }) => void;
+  'game:throw_emote': (payload: ThrowEmotePayload) => void;
   'chat:message': (msg: ChatMessage) => void;
   'game:paused': (paused: boolean) => void;
   'game:rebuy_prompt': (payload: { minBuyIn: number; defaultBuyIn: number }) => void;
@@ -230,4 +233,11 @@ export interface ChatMessage {
   playerName: string;
   message: string;
   sentAt: string;
+}
+
+export interface ThrowEmotePayload {
+  fromPlayerId: string;
+  toPlayerId: string;
+  type: ThrowEmoteType;
+  sentAt: number;
 }

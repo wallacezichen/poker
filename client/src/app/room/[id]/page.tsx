@@ -173,7 +173,7 @@ export default function RoomPage() {
     return updateRoomSettings(settings);
   }
 
-  async function handleRevealCards(count: 1 | 2 | 3) {
+  async function handleRevealCards(count: 1 | 2 | 3 | 4) {
     const res = await revealCards(count);
     if (!res.success) alert(res.error || t('room.error.reveal_failed'));
     return res;

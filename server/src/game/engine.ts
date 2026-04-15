@@ -309,7 +309,8 @@ function updateRunItTwiceLiveHandLabels(
   for (const p of contenders) {
     let nextLabel = '';
     if (state.gameType === 'omaha') {
-      if (p.holeCards.length >= 2 && board.length >= 3) {
+      // Omaha run-it-twice UX: begin showing from turn (4 board cards), then keep/update through river.
+      if (p.holeCards.length >= 2 && board.length >= 4) {
         const r = evaluatePlayerHandForVariant(p, board, state.gameType ?? 'short_deck');
         nextLabel = formatHandLabelEnDetailed(r);
       }
@@ -319,7 +320,8 @@ function updateRunItTwiceLiveHandLabels(
     }
 
     const labels = p.runItTwiceHandNamesZh ? [...p.runItTwiceHandNamesZh] : ['', ''];
-    labels[runIndex] = nextLabel;
+    // Never clear an existing line once shown; only update when we have a concrete label.
+    if (nextLabel) labels[runIndex] = nextLabel;
     p.runItTwiceHandNamesZh = [labels[0], labels[1]];
   }
 }
@@ -1080,10 +1082,8 @@ export function advanceRunoutStreet(state: FullGameState): FullGameState {
     state.stage = toStage;
     dealStreetToBoard(state, board, toStage);
     state.communityCards = board.slice();
-    if (currentRunIdx === 1) {
-      // Keep first-run label fixed while second-run label updates street by street.
-      updateRunItTwiceLiveHandLabels(state, board, 1);
-    }
+    // Update current run label street-by-street. Existing labels never get cleared.
+    updateRunItTwiceLiveHandLabels(state, board, currentRunIdx as 0 | 1);
     state.currentPlayerIndex = -1;
     return state;
   }

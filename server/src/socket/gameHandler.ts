@@ -720,22 +720,16 @@ export function registerGameHandlers(
     if (!state) return cb({ success: false, error: 'No active game' });
     if (state.stage !== 'showdown') return cb({ success: false, error: 'Only available at showdown' });
     const slotNum = Number(slot);
-    if (slotNum !== 1 && slotNum !== 2 && slotNum !== 3) return cb({ success: false, error: 'Invalid reveal slot' });
+    if (!Number.isInteger(slotNum) || slotNum < 1 || slotNum > 4) return cb({ success: false, error: 'Invalid reveal slot' });
 
     const player = state.players.find((p) => p.id === playerId);
     if (!player) return cb({ success: false, error: 'Player not found' });
 
     const holeCount = player.holeCards.length;
     if (holeCount <= 1) return cb({ success: false, error: 'No hole cards to reveal' });
+    if (slotNum > holeCount) return cb({ success: false, error: 'Invalid reveal slot' });
 
-    if (holeCount === 2 && slotNum === 3) {
-      return cb({ success: false, error: 'Invalid reveal slot' });
-    }
-    if (holeCount > 3 && slotNum === 3) {
-      return cb({ success: false, error: 'Invalid reveal slot' });
-    }
-
-    const bit = slotNum === 1 ? 1 : slotNum === 2 ? 2 : 4;
+    const bit = 1 << (slotNum - 1);
     const fullMask = (1 << Math.min(30, holeCount)) - 1;
     const nextMask = (player.revealedMask ?? 0) | bit;
     player.revealedMask = nextMask;
@@ -964,8 +958,34 @@ export function registerGameHandlers(
     const session = socketToPlayer.get(socket.id);
     if (!session) return;
 
-    const { roomId } = session;
+    const { roomId, playerId } = session;
+    const roomData = await getRoom(roomId);
+    if (!roomData) return;
+    if (roomData.host_id !== playerId) return;
     await startNextHand(io, roomId);
+  });
+
+  // ============================================================
+  // EMOTE THROW (broadcast cosmetic event to all players in room)
+  // ============================================================
+  socket.on('game:throw_emote', async ({ toPlayerId, type }) => {
+    const session = socketToPlayer.get(socket.id);
+    if (!session) return;
+    const { roomId, playerId } = session;
+    if (playerId === toPlayerId) return;
+    if (type !== 'egg' && type !== 'tomato' && type !== 'fish') return;
+
+    const players = await getPlayers(roomId);
+    const fromExists = players.some((p) => p.id === playerId);
+    const toExists = players.some((p) => p.id === toPlayerId);
+    if (!fromExists || !toExists) return;
+
+    io.to(roomId).emit('game:throw_emote', {
+      fromPlayerId: playerId,
+      toPlayerId,
+      type,
+      sentAt: Date.now(),
+    });
   });
 
   // ============================================================

@@ -1,13 +1,15 @@
 'use client';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { GameState, Room, JoinRequest, GameType } from '../types/poker';
+import { GameState, Room, JoinRequest, GameType, ThrowEmotePayload, ThrowEmoteType } from '../types/poker';
 import Card from './Card';
 import PlayerSeat from './PlayerSeat';
 import { useGameStore } from '../store/gameStore';
 import clsx from 'clsx';
+import { AnimatePresence, motion } from 'framer-motion';
 import { getSoundSettings, playBetSound, playCheckSound, playFlopSound, playRiverSound, playTurnSound, setSoundSettings } from '../lib/soundEffects';
 import { useI18n } from '../i18n/LanguageProvider';
 import { useChrome } from '../ui/ChromeProvider';
+import { getSocket } from '../hooks/useSocket';
 
 // Seat positions as percentage [top, left] on the oval table
 // Position 0 = bottom center (always my seat), others go clockwise
@@ -25,6 +27,18 @@ const SEAT_POSITIONS: Array<{ top: string; left: string }> = [
 const TWO_SEVEN_STEP_MS = 3000;
 const TWO_SEVEN_AWARD_DELAY_MS = 300;
 const TWO_SEVEN_AWARD_HOLD_MS = 1800;
+
+type ThrowBurstParticle = {
+  id: number;
+  emoji: string;
+  dx: number;
+  dy: number;
+  rotate: number;
+  scaleFrom: number;
+  scaleTo: number;
+  duration: number;
+  delay: number;
+};
 
 function formatChips(n: number): string {
   return String(n);
@@ -106,7 +120,7 @@ interface GameTableProps {
   onUpdateRoomSettings: (settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number; gameType: string }>) => Promise<{ success: boolean; error?: string }>;
   onSetPause: (paused: boolean) => void;
   onNextHand: () => void;
-  onRevealCards: (count: 1 | 2 | 3) => Promise<{ success: boolean; error?: string } | void>;
+  onRevealCards: (count: 1 | 2 | 3 | 4) => Promise<{ success: boolean; error?: string } | void>;
   onRevealDeadBoard: () => void;
   onRunItTwiceVote: (agree: boolean) => void;
   onEndSession: (rows: Array<{ id: string; name: string; buyIn: number; buyOut: number; net: number }>) => void;
@@ -149,6 +163,26 @@ export default function GameTable({
   const [manageTargetId, setManageTargetId] = useState<string | null>(null);
   const [manageChips, setManageChips] = useState<string>('');
   const [managing, setManaging] = useState(false);
+  const [throwMenu, setThrowMenu] = useState<{ targetId: string; x: number; y: number } | null>(null);
+  const [flyingThrow, setFlyingThrow] = useState<{
+    id: number;
+    targetId: string;
+    type: ThrowEmoteType;
+    icon: string;
+    flightDuration: number;
+    startX: number;
+    startY: number;
+    endX: number;
+    endY: number;
+  } | null>(null);
+  const [burstEffect, setBurstEffect] = useState<{
+    id: number;
+    type: ThrowEmoteType;
+    x: number;
+    y: number;
+    particles: ThrowBurstParticle[];
+  } | null>(null);
+  const [hitSeatEffect, setHitSeatEffect] = useState<{ id: number; targetId: string } | null>(null);
   const [checkBubblePlayers, setCheckBubblePlayers] = useState<Set<string>>(new Set());
   const [showSessionLedger, setShowSessionLedger] = useState(false);
   const [optimisticBetBubble, setOptimisticBetBubble] = useState<{ playerId: string; amount: number } | null>(null);
@@ -181,6 +215,9 @@ export default function GameTable({
   const twoSevenAnimHandRef = useRef<number>(0);
   const optimisticBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentActionBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const throwSeatRefs = useRef(new Map<string, HTMLDivElement | null>());
+  const burstClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hitSeatClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activeGameType, setActiveGameType] = useState<GameType>(() => normalizeGameType(gameState.gameType ?? room.settings.gameType));
   const handTypeLockRef = useRef<{ handNumber: number; gameType: GameType }>({
     handNumber: gameState.handNumber,
@@ -280,6 +317,13 @@ export default function GameTable({
 
   // Reorder players so my seat is at position 0
   const inHandById = new Map(gameState.players.map((p, idx) => [p.id, { player: p, idx }]));
+  const waitingNextHandPlayerCount = room.players.filter((p) => !inHandById.has(p.id) && !p.isAway).length;
+  const hostCanForceNextHand =
+    room.hostId === myPlayerId &&
+    !isGamePaused &&
+    !bombIntroRunning &&
+    gameState.stage !== 'showdown' &&
+    waitingNextHandPlayerCount > 0;
   const roomPlayersSorted = [...room.players].sort((a, b) => a.seatIndex - b.seatIndex);
   const myRoomIdx = roomPlayersSorted.findIndex(p => p.id === myPlayerId);
   const roomStartIdx = myRoomIdx >= 0 ? myRoomIdx : 0;
@@ -454,8 +498,21 @@ export default function GameTable({
   }, [gameState.handNumber, gameState.stage, twoSevenBonus, twoSevenCollected.length]);
   const manageTarget = manageTargetId ? room.players.find((p) => p.id === manageTargetId) : undefined;
   const myRevealMask = myPlayer?.revealedMask ?? 0;
-  const myFullRevealMask = myPlayer?.holeCards?.length === 3 ? 7 : 3;
-  const isMyFullyRevealed = myRevealMask === myFullRevealMask;
+  const myRevealHoleCount = Math.max(0, Math.min(4, myPlayer?.holeCards?.length ?? 0));
+  const myFullRevealMask = myRevealHoleCount > 0 ? (1 << myRevealHoleCount) - 1 : 0;
+  const isMyFullyRevealed = myRevealHoleCount > 0 && myRevealMask === myFullRevealMask;
+  const myRevealPanelCardCount = Math.max(
+    0,
+    Math.min(4, Math.max(myPlayer?.holeCards?.length ?? 0, myPlayer?.holeCardCount ?? 0))
+  );
+  const myRevealPanelCards = Array.from(
+    { length: myRevealPanelCardCount },
+    (_, idx) => myPlayer?.holeCards?.[idx]
+  );
+  const showRevealPanel =
+    !!myPlayer &&
+    myRevealPanelCardCount >= 2 &&
+    (showHandResult || gameState.stage === 'showdown' || (gameState.winners?.length ?? 0) > 0);
   const myRunItTwiceVote = runItTwice?.votes?.[myPlayerId] ?? null;
   const showRunItTwicePanel = runItTwice?.status === 'pending' && myPlayerId in (runItTwice?.votes || {});
   const showdownPlayers = gameState.players.filter((p) => !p.folded && !!p.handResult);
@@ -859,6 +916,94 @@ export default function GameTable({
       // ignore storage errors
     }
   }
+
+  function getSeatCenter(playerId: string): { x: number; y: number } | null {
+    const el = throwSeatRefs.current.get(playerId);
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  }
+
+  function openThrowMenu(targetPlayerId: string) {
+    const center = getSeatCenter(targetPlayerId);
+    if (!center) return;
+    setThrowMenu({
+      targetId: targetPlayerId,
+      x: center.x,
+      y: center.y,
+    });
+  }
+
+  function throwIconByType(type: ThrowEmoteType): string {
+    if (type === 'egg') return '🥚';
+    if (type === 'tomato') return '🍅';
+    return '🐟';
+  }
+
+  function burstEmojisByType(type: ThrowEmoteType): string[] {
+    if (type === 'egg') return ['🐓', '🐣', '🐔', '🍗', '🍳', '🥚'];
+    if (type === 'tomato') return ['🍅', '🍅', '🌶️', '🥫', '🧨', '💥'];
+    return ['🐟', '🫧', '🐠', '🦈', '🌊', '🎣'];
+  }
+
+  function buildBurstParticles(seedId: number, type: ThrowEmoteType): ThrowBurstParticle[] {
+    const emojis = burstEmojisByType(type);
+    const count = type === 'tomato' ? 26 : type === 'fish' ? 24 : 28;
+    return Array.from({ length: count }, (_, idx) => {
+      const angle = (Math.PI * 2 * idx) / count + Math.random() * 0.4;
+      const radius = (type === 'fish' ? 210 : 190) + Math.random() * 120;
+      return {
+        id: seedId * 100 + idx,
+        emoji: emojis[Math.floor(Math.random() * emojis.length)],
+        dx: Math.cos(angle) * radius,
+        dy: Math.sin(angle) * radius - (type === 'egg' ? 60 : 30) - Math.random() * 90,
+        rotate: (Math.random() * 2 - 1) * 520,
+        scaleFrom: 0.5 + Math.random() * 0.5,
+        scaleTo: 0.95 + Math.random() * 0.8,
+        duration: 0.62 + Math.random() * 0.32,
+        delay: Math.random() * 0.08,
+      };
+    });
+  }
+
+  function launchThrow(fromPlayerId: string, toPlayerId: string, type: ThrowEmoteType, sentAt: number) {
+    const start = getSeatCenter(fromPlayerId);
+    const end = getSeatCenter(toPlayerId);
+    if (!start || !end) {
+      return;
+    }
+    const throwId = sentAt;
+    setFlyingThrow({
+      id: throwId,
+      targetId: toPlayerId,
+      type,
+      icon: throwIconByType(type),
+      flightDuration: type === 'fish' ? 0.72 : 0.62,
+      startX: start.x,
+      startY: start.y,
+      endX: end.x,
+      endY: end.y,
+    });
+  }
+
+  function fireThrow(type: ThrowEmoteType) {
+    if (!throwMenu) return;
+    getSocket().emit('game:throw_emote', { toPlayerId: throwMenu.targetId, type });
+    setThrowMenu(null);
+  }
+
+  useEffect(() => {
+    const s = getSocket();
+    const onThrowEmote = (payload: ThrowEmotePayload) => {
+      launchThrow(payload.fromPlayerId, payload.toPlayerId, payload.type, payload.sentAt);
+    };
+    s.on('game:throw_emote', onThrowEmote);
+    return () => {
+      s.off('game:throw_emote', onThrowEmote);
+      if (burstClearTimerRef.current) clearTimeout(burstClearTimerRef.current);
+      if (hitSeatClearTimerRef.current) clearTimeout(hitSeatClearTimerRef.current);
+    };
+  }, []);
 
   return (
     <div
@@ -1616,6 +1761,19 @@ export default function GameTable({
                   </button>
                 </div>
               )}
+              {hostCanForceNextHand && (
+                <div className="mt-2 flex flex-col items-center gap-2">
+                  <div className="text-xs text-amber-200/90 bg-black/30 rounded-lg px-3 py-1 border border-amber-300/30">
+                    {waitingNextHandPlayerCount} player(s) waiting for next hand
+                  </div>
+                  <button
+                    onClick={onNextHand}
+                    className="px-6 py-2 rounded-lg border border-amber-300/50 bg-amber-700/30 hover:bg-amber-700/45 text-amber-100 font-semibold"
+                  >
+                    {t('table.continue_next_hand')}
+                  </button>
+                </div>
+              )}
               {isGamePaused && (
                 <div className="mt-2 px-5 py-2 rounded-lg border border-yellow-300/40 bg-black/35 text-yellow-200 font-semibold">
                   {t('table.game_paused')}
@@ -1628,6 +1786,7 @@ export default function GameTable({
           {orderedRoomPlayers.map((roomPlayer, displayIdx) => {
             const pos = SEAT_POSITIONS[displayIdx] || SEAT_POSITIONS[0];
             const inHand = inHandById.get(roomPlayer.id);
+            const isSeatHit = hitSeatEffect?.targetId === roomPlayer.id;
             const seatPlayer = inHand?.player ?? {
               id: roomPlayer.id,
               name: roomPlayer.name,
@@ -1652,70 +1811,78 @@ export default function GameTable({
                 key={roomPlayer.id}
                 className={clsx(
                   'absolute -translate-x-1/2 -translate-y-1/2',
-                  isHost && roomPlayer.id !== myPlayerId && 'cursor-pointer'
+                  roomPlayer.id !== myPlayerId && 'cursor-pointer'
                 )}
                 style={{ top: pos.top, left: pos.left }}
+                ref={(el) => {
+                  throwSeatRefs.current.set(roomPlayer.id, el);
+                }}
                 onClick={() => {
-                  if (!isHost || roomPlayer.id === myPlayerId) return;
-                  setManageTargetId(roomPlayer.id);
+                  if (roomPlayer.id === myPlayerId) return;
+                  openThrowMenu(roomPlayer.id);
                 }}
               >
-                <PlayerSeat
-                  player={seatPlayer}
-                  isDealer={origIdx === gameState.dealerIndex}
-                  isSmallBlind={origIdx === gameState.smallBlindIndex}
-                  isBigBlind={origIdx === gameState.bigBlindIndex}
-                  isActive={gameState.stage !== 'showdown' && gameState.currentPlayerIndex >= 0 && origIdx === gameState.currentPlayerIndex}
-                  isMe={roomPlayer.id === myPlayerId}
-                  isShowdown={gameState.stage === 'showdown'}
-                  isWinner={winnerIds.has(roomPlayer.id)}
-                  winAmount={winnerAmountById.get(roomPlayer.id) || 0}
-                  rebuyCount={rebuyCountByPlayerId[roomPlayer.id] || 0}
-                  highlightedCardKeys={showdownHighlightCardKeys}
-                  communityCards={gameState.communityCards}
-                  winsCount={winsByPlayer[roomPlayer.id] || 0}
-                  statusText={!inHand ? (roomPlayer.isAway ? 'AWAY' : 'WAIT NEXT HAND') : undefined}
-                  showCheckBubble={checkBubblePlayers.has(roomPlayer.id)}
-                  hideLiveHandLabel={
-                    (bombIntroRunning && !!gameState.bombPot?.active && gameState.stage === 'flop') ||
-                    hideLiveHandLabelDuringRunItTwice
-                  }
-                  autoPostActive={
-                    (bombIntroRunning &&
+                <motion.div
+                  animate={isSeatHit ? { x: [0, -9, 8, -6, 0], y: [0, -2, 1, 0], scale: [1, 1.04, 0.97, 1] } : { x: 0, y: 0, scale: 1 }}
+                  transition={{ duration: 0.36, ease: 'easeOut' }}
+                >
+                  <PlayerSeat
+                    player={seatPlayer}
+                    isDealer={origIdx === gameState.dealerIndex}
+                    isSmallBlind={origIdx === gameState.smallBlindIndex}
+                    isBigBlind={origIdx === gameState.bigBlindIndex}
+                    isActive={gameState.stage !== 'showdown' && gameState.currentPlayerIndex >= 0 && origIdx === gameState.currentPlayerIndex}
+                    isMe={roomPlayer.id === myPlayerId}
+                    isShowdown={gameState.stage === 'showdown'}
+                    isWinner={winnerIds.has(roomPlayer.id)}
+                    winAmount={winnerAmountById.get(roomPlayer.id) || 0}
+                    rebuyCount={rebuyCountByPlayerId[roomPlayer.id] || 0}
+                    highlightedCardKeys={showdownHighlightCardKeys}
+                    communityCards={gameState.communityCards}
+                    winsCount={winsByPlayer[roomPlayer.id] || 0}
+                    statusText={!inHand ? (roomPlayer.isAway ? 'AWAY' : 'WAIT NEXT HAND') : undefined}
+                    showCheckBubble={checkBubblePlayers.has(roomPlayer.id)}
+                    hideLiveHandLabel={
+                      (bombIntroRunning && !!gameState.bombPot?.active && gameState.stage === 'flop') ||
+                      hideLiveHandLabelDuringRunItTwice
+                    }
+                    autoPostActive={
+                      (bombIntroRunning &&
+                        gameState.bombPot?.active &&
+                        roomPlayer.id === bombIntroOrderIds[Math.min(bombIntroStep, Math.max(0, bombIntroOrderIds.length - 1))]) ||
+                      (!!optimisticBetBubble &&
+                        roomPlayer.id === optimisticBetBubble.playerId) ||
+                      (!!recentActionBetBubble &&
+                        roomPlayer.id === recentActionBetBubble.playerId)
+                    }
+                    autoPostAmount={
+                      bombIntroRunning &&
                       gameState.bombPot?.active &&
-                      roomPlayer.id === bombIntroOrderIds[Math.min(bombIntroStep, Math.max(0, bombIntroOrderIds.length - 1))]) ||
-                    (!!optimisticBetBubble &&
-                      roomPlayer.id === optimisticBetBubble.playerId) ||
-                    (!!recentActionBetBubble &&
-                      roomPlayer.id === recentActionBetBubble.playerId)
-                  }
-                  autoPostAmount={
-                    bombIntroRunning &&
-                    gameState.bombPot?.active &&
-                    roomPlayer.id === bombIntroOrderIds[Math.min(bombIntroStep, Math.max(0, bombIntroOrderIds.length - 1))]
-                      ? Number(gameState.bombPot?.amount || 0)
-                      : optimisticBetBubble &&
-                            roomPlayer.id === optimisticBetBubble.playerId
-                          ? Number(optimisticBetBubble.amount || 0)
-                        : recentActionBetBubble &&
-                            roomPlayer.id === recentActionBetBubble.playerId
-                          ? Number(recentActionBetBubble.amount || 0)
-                          : undefined
-                  }
-                  bonusBubbleActive={
-                    twoSevenAnimRunning &&
-                    twoSevenAnimPhase === 'collect' &&
-                    roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
-                  }
-                  bonusBubbleAmount={
-                    twoSevenAnimRunning &&
-                    twoSevenAnimPhase === 'collect' &&
-                    roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
-                      ? Number(twoSevenCurrentCollectEntry?.amount || 0)
-                      : undefined
-                  }
-                  gameType={activeGameType}
-                />
+                      roomPlayer.id === bombIntroOrderIds[Math.min(bombIntroStep, Math.max(0, bombIntroOrderIds.length - 1))]
+                        ? Number(gameState.bombPot?.amount || 0)
+                        : optimisticBetBubble &&
+                              roomPlayer.id === optimisticBetBubble.playerId
+                            ? Number(optimisticBetBubble.amount || 0)
+                          : recentActionBetBubble &&
+                              roomPlayer.id === recentActionBetBubble.playerId
+                            ? Number(recentActionBetBubble.amount || 0)
+                            : undefined
+                    }
+                    bonusBubbleActive={
+                      twoSevenAnimRunning &&
+                      twoSevenAnimPhase === 'collect' &&
+                      roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
+                    }
+                    bonusBubbleAmount={
+                      twoSevenAnimRunning &&
+                      twoSevenAnimPhase === 'collect' &&
+                      roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
+                        ? Number(twoSevenCurrentCollectEntry?.amount || 0)
+                        : undefined
+                    }
+                    gameType={activeGameType}
+                  />
+                </motion.div>
               </div>
             );
           })}
@@ -1792,10 +1959,7 @@ export default function GameTable({
 	              </div>
 	            </div>
 	          )}
-          {(showHandResult || gameState.stage === 'showdown') &&
-            myPlayer &&
-            (myPlayer.holeCards.length <= 2 ||
-              (isCrazyPineapple && myPlayer.holeCards.length === 3)) && (
+          {showRevealPanel && (
               <div
                 className={clsx(
                   'relative w-[312px] rounded-xl overflow-hidden border-[3px] border-[#25d483] shadow-[0_10px_24px_rgba(0,0,0,0.35)]',
@@ -1813,9 +1977,12 @@ export default function GameTable({
                 <button
                   type="button"
                   onClick={async () => {
-                    if ((myRevealMask & 1) === 0) await onRevealCards(1);
-                    if ((myRevealMask & 2) === 0) await onRevealCards(2);
-                    if (myPlayer.holeCards.length === 3 && (myRevealMask & 4) === 0) await onRevealCards(3);
+                    const revealableSlots = myRevealPanelCards
+                      .map((_, idx) => ({ slot: (idx + 1) as 1 | 2 | 3 | 4, bit: 1 << idx }));
+                    for (const entry of revealableSlots) {
+                      if ((myRevealMask & entry.bit) !== 0) continue;
+                      await onRevealCards(entry.slot);
+                    }
                   }}
                   disabled={isMyFullyRevealed}
                   className={clsx(
@@ -1830,48 +1997,33 @@ export default function GameTable({
                 <div
                   className={clsx(
                     'grid border-t-[2px] border-[#25d483]',
-                    myPlayer.holeCards.length === 3 ? 'grid-cols-3' : 'grid-cols-2'
+                    myRevealPanelCards.length === 4
+                      ? 'grid-cols-4'
+                      : myRevealPanelCards.length === 3
+                        ? 'grid-cols-3'
+                        : 'grid-cols-2'
                   )}
                 >
-                  <button
-                    onClick={() => onRevealCards(1)}
-                    disabled={(myRevealMask & 1) !== 0}
-                    className={clsx(
-                      'relative px-3 pt-3 pb-4 font-extrabold text-[2.3rem] leading-none border-r-[2px] border-[#25d483] transition-colors',
-                      (myRevealMask & 1) !== 0
-                        ? 'bg-[#35b973] text-white'
-                        : 'bg-transparent text-[#2edd8f] hover:bg-black/10'
-                    )}
-                  >
-                    {cardShortLabel(myPlayer.holeCards?.[0])}
-                  </button>
-                  <button
-                    onClick={() => onRevealCards(2)}
-                    disabled={(myRevealMask & 2) !== 0}
-                    className={clsx(
-                      'relative px-3 pt-3 pb-4 font-extrabold text-[2.3rem] leading-none transition-colors',
-                      myPlayer.holeCards.length === 3 && 'border-r-[2px] border-[#25d483]',
-                      (myRevealMask & 2) !== 0
-                        ? 'bg-[#35b973] text-white'
-                        : 'bg-transparent text-[#2edd8f] hover:bg-black/10'
-                    )}
-                  >
-                    {cardShortLabel(myPlayer.holeCards?.[1])}
-                  </button>
-                  {myPlayer.holeCards.length === 3 && (
-                    <button
-                      type="button"
-                      onClick={() => onRevealCards(3)}
-                      disabled={(myRevealMask & 4) !== 0}
-                      className={clsx(
-                        'relative px-3 pt-3 pb-4 font-extrabold text-[2.3rem] leading-none transition-colors',
-                        ((myRevealMask & 4) !== 0 || isMyFullyRevealed) ? 'bg-[#35b973] text-white' : 'bg-transparent text-[#2edd8f] hover:bg-black/10',
-                        (myRevealMask & 4) === 0 && 'cursor-pointer'
-                      )}
-                    >
-                      {cardShortLabel(myPlayer.holeCards?.[2])}
-                    </button>
-                  )}
+                  {myRevealPanelCards.map((card, idx, arr) => {
+                    const bit = 1 << idx;
+                    const slot = (idx + 1) as 1 | 2 | 3 | 4;
+                    const revealed = (myRevealMask & bit) !== 0;
+                    return (
+                      <button
+                        key={`reveal-slot-${slot}`}
+                        type="button"
+                        onClick={() => onRevealCards(slot)}
+                        disabled={revealed}
+                        className={clsx(
+                          'relative px-3 pt-3 pb-4 font-extrabold text-[2.3rem] leading-none transition-colors',
+                          idx < arr.length - 1 && 'border-r-[2px] border-[#25d483]',
+                          revealed ? 'bg-[#35b973] text-white' : 'bg-transparent text-[#2edd8f] hover:bg-black/10'
+                        )}
+                      >
+                        {cardShortLabel(card)}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2005,6 +2157,132 @@ export default function GameTable({
         </div>
       </div>
 
+      {throwMenu && (
+        <>
+          <button
+            type="button"
+            aria-label="close-throw-menu"
+            onClick={() => setThrowMenu(null)}
+            className="fixed inset-0 z-[85] cursor-default"
+          />
+          <div
+            className="fixed z-[90] -translate-x-1/2 -translate-y-[115%] rounded-xl border border-white/25 bg-black/75 px-2 py-2 shadow-[0_16px_36px_rgba(0,0,0,0.5)]"
+            style={{ left: throwMenu.x, top: throwMenu.y }}
+          >
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => fireThrow('egg')}
+                className="h-10 px-3 rounded-lg border border-white/30 bg-white/10 hover:bg-white/20 text-sm font-semibold"
+              >
+                🥚 {t('table.throw.egg')}
+              </button>
+              <button
+                onClick={() => fireThrow('tomato')}
+                className="h-10 px-3 rounded-lg border border-white/30 bg-white/10 hover:bg-white/20 text-sm font-semibold"
+              >
+                🍅 {t('table.throw.tomato')}
+              </button>
+              <button
+                onClick={() => fireThrow('fish')}
+                className="h-10 px-3 rounded-lg border border-cyan-300/50 bg-cyan-500/20 hover:bg-cyan-500/35 text-sm font-semibold text-cyan-100"
+              >
+                🐟 {t('table.throw.fish')}
+              </button>
+              {isHost && (
+                <button
+                  onClick={() => {
+                    setThrowMenu(null);
+                    setManageTargetId(throwMenu.targetId);
+                  }}
+                  className="h-10 px-3 rounded-lg border border-amber-300/45 bg-amber-500/20 hover:bg-amber-500/35 text-sm font-semibold text-amber-100"
+                >
+                  ⚙ {t('table.throw.manage')}
+                </button>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      <AnimatePresence>
+        {flyingThrow && (
+          <motion.div
+            key={flyingThrow.id}
+            className={clsx(
+              'fixed z-[95] pointer-events-none text-5xl leading-none select-none',
+              flyingThrow.type === 'tomato'
+                ? 'drop-shadow-[0_8px_18px_rgba(239,68,68,0.72)]'
+                : flyingThrow.type === 'fish'
+                  ? 'drop-shadow-[0_8px_18px_rgba(34,211,238,0.72)]'
+                  : 'drop-shadow-[0_8px_18px_rgba(250,204,21,0.68)]'
+            )}
+            style={{ left: flyingThrow.startX, top: flyingThrow.startY }}
+            initial={{ x: 0, y: 0, rotate: 0, scale: 1.08, opacity: 1 }}
+            animate={{
+              x: flyingThrow.endX - flyingThrow.startX,
+              y: flyingThrow.endY - flyingThrow.startY,
+              rotate: flyingThrow.type === 'fish' ? 220 : 480,
+              scale: 0.92,
+              opacity: 0.96,
+            }}
+            transition={{ duration: flyingThrow.flightDuration, ease: 'linear' }}
+            onAnimationComplete={() => {
+              setBurstEffect({
+                id: flyingThrow.id,
+                type: flyingThrow.type,
+                x: flyingThrow.endX,
+                y: flyingThrow.endY,
+                particles: buildBurstParticles(flyingThrow.id, flyingThrow.type),
+              });
+              setHitSeatEffect({ id: flyingThrow.id, targetId: flyingThrow.targetId });
+              if (hitSeatClearTimerRef.current) clearTimeout(hitSeatClearTimerRef.current);
+              hitSeatClearTimerRef.current = setTimeout(() => setHitSeatEffect(null), 560);
+              setFlyingThrow(null);
+              if (burstClearTimerRef.current) clearTimeout(burstClearTimerRef.current);
+              burstClearTimerRef.current = setTimeout(() => setBurstEffect(null), 1200);
+            }}
+          >
+            {flyingThrow.icon}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {burstEffect && (
+          <div
+            key={burstEffect.id}
+            className="fixed z-[94] pointer-events-none"
+            style={{ left: burstEffect.x, top: burstEffect.y }}
+          >
+            <motion.div
+              className={clsx(
+                'absolute -translate-x-1/2 -translate-y-1/2 text-7xl leading-none',
+                burstEffect.type === 'tomato'
+                  ? 'text-rose-400/95'
+                  : burstEffect.type === 'fish'
+                    ? 'text-cyan-300/95'
+                    : 'text-yellow-100/95'
+              )}
+              initial={{ scale: 0.3, opacity: 0 }}
+              animate={{ scale: [0.5, 1.4, 1.05], opacity: [0, 1, 0.18] }}
+              transition={{ duration: 0.34, ease: 'easeOut' }}
+            >
+              💥
+            </motion.div>
+            {burstEffect.particles.map((p) => (
+              <motion.span
+                key={p.id}
+                className="absolute -translate-x-1/2 -translate-y-1/2 text-4xl leading-none select-none"
+                initial={{ x: 0, y: 0, opacity: 0, rotate: 0, scale: p.scaleFrom }}
+                animate={{ x: p.dx, y: p.dy, opacity: [0, 1, 0.92, 0], rotate: p.rotate, scale: p.scaleTo }}
+                transition={{ duration: p.duration, delay: p.delay, ease: [0.22, 0.82, 0.22, 1] }}
+              >
+                {p.emoji}
+              </motion.span>
+            ))}
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
