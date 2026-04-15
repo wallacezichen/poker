@@ -68,6 +68,8 @@ function normalizeRoomSettings(raw: any): RoomSettings {
     bombPotInterval: Math.max(1, Math.floor(raw?.bombPotInterval ?? 5)),
     twoSevenEnabled: !!raw?.twoSevenEnabled,
     twoSevenAmount: Math.max(1, Math.floor(raw?.twoSevenAmount ?? 100)),
+    squidGameEnabled: !!raw?.squidGameEnabled,
+    squidGameAmount: Math.max(1, Math.floor(raw?.squidGameAmount ?? 100)),
   };
 }
 
@@ -1237,7 +1239,10 @@ function finishShowdown(io: Server, roomId: string, state: FullGameState): void 
     const handGameType = normalizeGameType(state.gameType);
     const twoSevenEnabled = handGameType === 'regular' && !!roomData?.settings?.twoSevenEnabled;
     const twoSevenAmount = Math.max(1, Math.floor(roomData?.settings?.twoSevenAmount ?? 100));
+    const squidGameEnabled = handGameType === 'regular' && !!roomData?.settings?.squidGameEnabled;
+    const squidGameAmount = Math.max(1, Math.floor(roomData?.settings?.squidGameAmount ?? 100));
     state.twoSevenBonus = undefined;
+    state.squidGamePenalty = undefined;
 
     const singleWinner = (state.winners ?? []).length === 1 ? state.winners![0] : null;
     // 27 bonus applies whenever there is exactly one winner with 2+7,
@@ -1266,6 +1271,47 @@ function finishShowdown(io: Server, roomId: string, state: FullGameState): void 
             amountPerPlayer: twoSevenAmount,
             total,
             collectedFrom,
+          };
+        }
+      }
+    }
+
+    // "Squid Game" (stand-up style penalty): choose one final loser and make them pay every other player.
+    if (squidGameEnabled && state.players.length >= 2) {
+      const winnerIds = new Set((state.winners ?? []).map((w) => w.playerId));
+      const payerCandidates = state.players
+        .filter((p) => !winnerIds.has(p.id))
+        .sort((a, b) => {
+          const aShowdownLoser = a.folded ? 1 : 0;
+          const bShowdownLoser = b.folded ? 1 : 0;
+          if (aShowdownLoser !== bShowdownLoser) return aShowdownLoser - bShowdownLoser;
+          if (a.totalBet !== b.totalBet) return b.totalBet - a.totalBet;
+          return a.seatIndex - b.seatIndex;
+        });
+      const payer = payerCandidates[0];
+      if (payer) {
+        const paidTo: Array<{ playerId: string; playerName: string; amount: number }> = [];
+        let total = 0;
+        const recipients = state.players
+          .filter((p) => p.id !== payer.id)
+          .sort((a, b) => a.seatIndex - b.seatIndex);
+        for (const recipient of recipients) {
+          const pay = Math.min(squidGameAmount, payer.chips);
+          if (pay <= 0) break;
+          payer.chips -= pay;
+          recipient.chips += pay;
+          total += pay;
+          paidTo.push({ playerId: recipient.id, playerName: recipient.name, amount: pay });
+          const winnerInfo = state.winners?.find((w) => w.playerId === recipient.id);
+          if (winnerInfo) winnerInfo.chipsWon += pay;
+        }
+        if (total > 0) {
+          state.squidGamePenalty = {
+            payerId: payer.id,
+            payerName: payer.name,
+            amountPerPlayer: squidGameAmount,
+            total,
+            paidTo,
           };
         }
       }

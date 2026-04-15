@@ -27,6 +27,8 @@ const SEAT_POSITIONS: Array<{ top: string; left: string }> = [
 const TWO_SEVEN_STEP_MS = 3000;
 const TWO_SEVEN_AWARD_DELAY_MS = 300;
 const TWO_SEVEN_AWARD_HOLD_MS = 1800;
+const SQUID_GAME_STEP_MS = 3000;
+const SQUID_GAME_HOLD_MS = 1800;
 
 type ThrowBurstParticle = {
   id: number;
@@ -117,7 +119,7 @@ interface GameTableProps {
   onSetAway: (away: boolean) => void;
   onJoinRequestDecision: (requestId: string, approve: boolean, buyIn?: number) => void;
   onHostManagePlayer: (targetPlayerId: string, action: 'set_chips' | 'kick', chips?: number) => Promise<{ success: boolean; error?: string }>;
-  onUpdateRoomSettings: (settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number; gameType: string }>) => Promise<{ success: boolean; error?: string }>;
+  onUpdateRoomSettings: (settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number; squidGameEnabled: boolean; squidGameAmount: number; gameType: string }>) => Promise<{ success: boolean; error?: string }>;
   onSetPause: (paused: boolean) => void;
   onNextHand: () => void;
   onRevealCards: (count: 1 | 2 | 3 | 4) => Promise<{ success: boolean; error?: string } | void>;
@@ -195,6 +197,8 @@ export default function GameTable({
   const [bombPotIntervalDraft, setBombPotIntervalDraft] = useState('5');
   const [twoSevenEnabledDraft, setTwoSevenEnabledDraft] = useState(false);
   const [twoSevenAmountDraft, setTwoSevenAmountDraft] = useState('100');
+  const [squidGameEnabledDraft, setSquidGameEnabledDraft] = useState(false);
+  const [squidGameAmountDraft, setSquidGameAmountDraft] = useState('100');
   const [savingOptions, setSavingOptions] = useState(false);
   const [optionsToast, setOptionsToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [bombIntroRunning, setBombIntroRunning] = useState(false);
@@ -213,6 +217,8 @@ export default function GameTable({
   const [twoSevenAnimPhase, setTwoSevenAnimPhase] = useState<'collect' | 'award' | null>(null);
   const twoSevenAnimTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const twoSevenAnimHandRef = useRef<number>(0);
+  const squidGameAnimTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const squidGameAnimHandRef = useRef<number>(0);
   const optimisticBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentActionBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const throwSeatRefs = useRef(new Map<string, HTMLDivElement | null>());
@@ -416,6 +422,8 @@ export default function GameTable({
     twoSevenAnimRunning && twoSevenAnimPhase === 'collect'
       ? twoSevenCollected[Math.min(twoSevenAnimStep, Math.max(0, twoSevenCollected.length - 1))]
       : undefined;
+  const squidGamePenalty = gameState.squidGamePenalty;
+  const squidGamePaidTo = squidGamePenalty?.paidTo || [];
 
   useEffect(() => {
     setSmallBlindDraft(String(Math.max(1, Math.floor(room.settings.smallBlind ?? 50))));
@@ -425,7 +433,9 @@ export default function GameTable({
     setBombPotIntervalDraft(String(Math.max(1, Math.floor(room.settings.bombPotInterval ?? 5))));
     setTwoSevenEnabledDraft(!!room.settings.twoSevenEnabled);
     setTwoSevenAmountDraft(String(Math.max(1, Math.floor(room.settings.twoSevenAmount ?? 100))));
-  }, [room.settings.smallBlind, room.settings.bigBlind, room.settings.bombPotEnabled, room.settings.bombPotAmount, room.settings.bombPotInterval, room.settings.twoSevenEnabled, room.settings.twoSevenAmount]);
+    setSquidGameEnabledDraft(!!room.settings.squidGameEnabled);
+    setSquidGameAmountDraft(String(Math.max(1, Math.floor(room.settings.squidGameAmount ?? 100))));
+  }, [room.settings.smallBlind, room.settings.bigBlind, room.settings.bombPotEnabled, room.settings.bombPotAmount, room.settings.bombPotInterval, room.settings.twoSevenEnabled, room.settings.twoSevenAmount, room.settings.squidGameEnabled, room.settings.squidGameAmount]);
   useEffect(() => {
     const isBombHand = !!gameState.bombPot?.active;
     if (!isBombHand || gameState.handNumber === bombIntroHandRef.current) return;
@@ -496,6 +506,31 @@ export default function GameTable({
       twoSevenAnimTimersRef.current = [];
     };
   }, [gameState.handNumber, gameState.stage, twoSevenBonus, twoSevenCollected.length]);
+  useEffect(() => {
+    if (gameState.stage !== 'showdown' || !squidGamePenalty) return;
+    if (squidGameAnimHandRef.current === gameState.handNumber) return;
+    squidGameAnimHandRef.current = gameState.handNumber;
+
+    for (const t of squidGameAnimTimersRef.current) clearTimeout(t);
+    squidGameAnimTimersRef.current = [];
+
+    squidGamePaidTo.forEach((_, idx) => {
+      const t = setTimeout(() => {
+        playBetSound();
+      }, idx * SQUID_GAME_STEP_MS);
+      squidGameAnimTimersRef.current.push(t);
+    });
+
+    const finishTimer = setTimeout(() => {
+      squidGameAnimTimersRef.current = [];
+    }, squidGamePaidTo.length * SQUID_GAME_STEP_MS + SQUID_GAME_HOLD_MS);
+    squidGameAnimTimersRef.current.push(finishTimer);
+
+    return () => {
+      for (const t of squidGameAnimTimersRef.current) clearTimeout(t);
+      squidGameAnimTimersRef.current = [];
+    };
+  }, [gameState.handNumber, gameState.stage, squidGamePenalty, squidGamePaidTo.length]);
   const manageTarget = manageTargetId ? room.players.find((p) => p.id === manageTargetId) : undefined;
   const myRevealMask = myPlayer?.revealedMask ?? 0;
   const myRevealHoleCount = Math.max(0, Math.min(4, myPlayer?.holeCards?.length ?? 0));
@@ -1285,6 +1320,48 @@ export default function GameTable({
                 </div>
               )}
 
+              {isRegularGame && (
+                <div className="mt-3 rounded-lg border border-white/15 bg-white/5 p-3">
+                  <div className="text-sm font-semibold text-white/90 mb-2">{t('table.options.section.squid')}</div>
+                  <div className="flex items-center justify-start gap-5">
+                    <span className="text-sm text-white/90">{t('table.options.enable_squid')}</span>
+                    <button
+                      disabled={!isHost}
+                      onClick={() => isHost && setSquidGameEnabledDraft(v => !v)}
+                      className={clsx(
+                        'relative inline-flex h-7 w-14 items-center rounded-full transition-colors',
+                        !isHost && 'opacity-50 cursor-not-allowed',
+                        squidGameEnabledDraft ? 'bg-emerald-500' : 'bg-slate-500'
+                      )}
+                      aria-pressed={squidGameEnabledDraft}
+                    >
+                      <span
+                        className={clsx(
+                          'inline-block h-5 w-5 transform rounded-full bg-white transition-transform',
+                          squidGameEnabledDraft ? 'translate-x-8' : 'translate-x-1'
+                        )}
+                      />
+                    </button>
+                  </div>
+                  <div className="mt-3">
+                    <div className="text-xs text-white/65 mb-1">{t('table.options.amount_per_other')}</div>
+                    <input
+                      type="number"
+                      min={1}
+                      disabled={!isHost}
+                      value={squidGameAmountDraft}
+                      onChange={(e) => setSquidGameAmountDraft(e.target.value)}
+                      className="w-full rounded border border-white/25 bg-black/35 px-3 py-2 text-white outline-none focus:border-emerald-400 disabled:opacity-60"
+                    />
+                  </div>
+                  <div className="mt-2 text-xs text-white/55">
+                    {room.settings.squidGameEnabled
+                      ? t('table.options.current_on_squid', { amount: room.settings.squidGameAmount })
+                      : t('table.options.current_off')}
+                  </div>
+                </div>
+              )}
+
               <div className="mt-4 flex justify-end">
                 <button
                   disabled={!isHost || savingOptions}
@@ -1338,6 +1415,18 @@ export default function GameTable({
                         return;
                       }
                     }
+                    const squidRaw = squidGameAmountDraft.trim();
+                    const squidGameAmount = Number(squidRaw || room.settings.squidGameAmount || 100);
+                    if (isRegularGame) {
+                      if (!squidRaw) {
+                        alert(t('table.options.error.empty_squid'));
+                        return;
+                      }
+                      if (!Number.isInteger(squidGameAmount) || squidGameAmount <= 0) {
+                        alert(t('table.options.error.posint_squid'));
+                        return;
+                      }
+                    }
                     setSavingOptions(true);
                     const res = await onUpdateRoomSettings({
                       smallBlind: sb,
@@ -1347,6 +1436,8 @@ export default function GameTable({
                       bombPotInterval: bombInterval,
                       twoSevenEnabled: isRegularGame ? twoSevenEnabledDraft : false,
                       twoSevenAmount,
+                      squidGameEnabled: isRegularGame ? squidGameEnabledDraft : false,
+                      squidGameAmount,
                     });
                     setSavingOptions(false);
                     if (!res.success) {
@@ -1551,6 +1642,13 @@ export default function GameTable({
                 {twoSevenBonus && (
                   <div className="flex items-center gap-1 rounded-full bg-emerald-900/70 border border-emerald-200/40 px-3 py-1">
                     <span className="text-sm font-extrabold tracking-wide text-emerald-100">27 GAME WINNER</span>
+                  </div>
+                )}
+                {squidGamePenalty && (
+                  <div className="flex items-center gap-1 rounded-full bg-red-900/70 border border-red-200/50 px-3 py-1">
+                    <span className="text-sm font-extrabold tracking-wide text-red-100">
+                      SQUID GAME PAYER: {squidGamePenalty.payerName}
+                    </span>
                   </div>
                 )}
               </div>
@@ -1879,6 +1977,18 @@ export default function GameTable({
                       roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
                         ? Number(twoSevenCurrentCollectEntry?.amount || 0)
                         : undefined
+                    }
+                    squidBubbleVariant={
+                      squidGamePenalty?.payerId === roomPlayer.id
+                        ? 'lose'
+                        : squidGamePaidTo.some((x) => x.playerId === roomPlayer.id)
+                          ? 'win'
+                          : undefined
+                    }
+                    squidBubbleAmount={
+                      squidGamePenalty?.payerId === roomPlayer.id
+                        ? Number(squidGamePenalty.total || 0)
+                        : Number(squidGamePaidTo.find((x) => x.playerId === roomPlayer.id)?.amount || 0)
                     }
                     gameType={activeGameType}
                   />

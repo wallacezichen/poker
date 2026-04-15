@@ -169,7 +169,7 @@ export default function RoomPage() {
     return res;
   }
 
-  async function handleUpdateRoomSettings(settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number }>) {
+  async function handleUpdateRoomSettings(settings: Partial<{ smallBlind: number; bigBlind: number; bombPotEnabled: boolean; bombPotAmount: number; bombPotInterval: number; twoSevenEnabled: boolean; twoSevenAmount: number; squidGameEnabled: boolean; squidGameAmount: number }>) {
     return updateRoomSettings(settings);
   }
 

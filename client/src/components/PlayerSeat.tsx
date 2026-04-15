@@ -24,6 +24,8 @@ interface PlayerSeatProps {
   autoPostActive?: boolean;
   bonusBubbleAmount?: number;
   bonusBubbleActive?: boolean;
+  squidBubbleAmount?: number;
+  squidBubbleVariant?: 'win' | 'lose';
   gameType?: GameType;
   hideLiveHandLabel?: boolean;
 }
@@ -39,10 +41,11 @@ function cardKey(card?: CardType): string {
 
 export default function PlayerSeat({
   player, isDealer, isSmallBlind, isBigBlind,
-  isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false, autoPostAmount, autoPostActive = false, bonusBubbleAmount, bonusBubbleActive = false, gameType = 'short_deck', hideLiveHandLabel = false,
+  isActive, isMe, isShowdown, isWinner = false, winAmount = 0, rebuyCount = 0, highlightedCardKeys, communityCards = [], winsCount = 0, statusText, showCheckBubble = false, autoPostAmount, autoPostActive = false, bonusBubbleAmount, bonusBubbleActive = false, squidBubbleAmount, squidBubbleVariant, gameType = 'short_deck', hideLiveHandLabel = false,
 }: PlayerSeatProps) {
   const { t } = useI18n();
   const bonusBubbleDisplayAmount = Math.abs(Number(bonusBubbleAmount ?? 0));
+  const squidBubbleDisplayAmount = Math.abs(Number(squidBubbleAmount ?? 0));
   const expectedHoleCount =
     gameType === 'omaha'
       ? 4
@@ -184,6 +187,20 @@ export default function PlayerSeat({
                   {formatChips(bonusBubbleDisplayAmount)}
                 </div>
               )}
+            </div>
+          )}
+          {squidBubbleVariant && squidBubbleDisplayAmount > 0 && (
+            <div className="absolute -top-12 left-[calc(50%+2.4rem)]">
+              <div
+                className={clsx(
+                  'rounded-full px-3 h-12 border-2 text-sm font-extrabold tracking-wide flex items-center justify-center shadow-[0_10px_24px_rgba(0,0,0,0.45)] whitespace-nowrap',
+                  squidBubbleVariant === 'win'
+                    ? 'bg-yellow-300 text-black border-yellow-100'
+                    : 'bg-red-700 text-white border-red-200'
+                )}
+              >
+                {squidBubbleVariant === 'win' ? '+' : '-'}{formatChips(squidBubbleDisplayAmount)}
+              </div>
             </div>
           )}
           {showCheckBubble && (

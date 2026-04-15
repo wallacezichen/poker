@@ -437,7 +437,7 @@ export function useSocket() {
     });
   }
 
-  function updateRoomSettings(settings: Partial<Pick<RoomSettings, 'smallBlind' | 'bigBlind' | 'bombPotEnabled' | 'bombPotAmount' | 'bombPotInterval' | 'twoSevenEnabled' | 'twoSevenAmount' | 'gameType'>>) {
+  function updateRoomSettings(settings: Partial<Pick<RoomSettings, 'smallBlind' | 'bigBlind' | 'bombPotEnabled' | 'bombPotAmount' | 'bombPotInterval' | 'twoSevenEnabled' | 'twoSevenAmount' | 'squidGameEnabled' | 'squidGameAmount' | 'gameType'>>) {
     return new Promise<{ success: boolean; error?: string }>((resolve) => {
       getSocket().emit('room:update_settings', { settings }, (res) => resolve(res));
     });
