@@ -147,6 +147,9 @@ export default function GameTable({
 
   const [raiseAmount, setRaiseAmount] = useState(0);
   const [chatInput, setChatInput] = useState('');
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [showMobileChat, setShowMobileChat] = useState(false);
+  const [mobileUnreadCount, setMobileUnreadCount] = useState(0);
   const [winsByPlayer, setWinsByPlayer] = useState<Record<string, number>>({});
 
   useEffect(() => {
@@ -156,6 +159,33 @@ export default function GameTable({
       .then(data => setWinsByPlayer(data))
       .catch(() => {});
   }, [roomId]);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 767px)');
+    const sync = () => {
+      const mobile = mq.matches;
+      setIsMobileViewport(mobile);
+      if (!mobile) setShowMobileChat(false);
+    };
+    sync();
+    if (typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', sync);
+      return () => mq.removeEventListener('change', sync);
+    }
+    mq.addListener(sync);
+    return () => mq.removeListener(sync);
+  }, []);
+  useEffect(() => {
+    const prevLen = prevChatLenRef.current;
+    const nextLen = chatMessages.length;
+    if (nextLen > prevLen && isMobileViewport && !showMobileChat) {
+      setMobileUnreadCount((c) => c + (nextLen - prevLen));
+    }
+    prevChatLenRef.current = nextLen;
+  }, [chatMessages.length, isMobileViewport, showMobileChat]);
+  useEffect(() => {
+    if (showMobileChat || !isMobileViewport) setMobileUnreadCount(0);
+  }, [showMobileChat, isMobileViewport]);
   const [showRaisePanel, setShowRaisePanel] = useState(false);
   const [uiScale, setUiScale] = useState(1);
   const [showRulesModal, setShowRulesModal] = useState(false);
@@ -219,6 +249,7 @@ export default function GameTable({
   const twoSevenAnimHandRef = useRef<number>(0);
   const squidGameAnimTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const squidGameAnimHandRef = useRef<number>(0);
+  const prevChatLenRef = useRef<number>(chatMessages.length);
   const optimisticBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentActionBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const throwSeatRefs = useRef(new Map<string, HTMLDivElement | null>());
@@ -351,6 +382,12 @@ export default function GameTable({
   const presetRaiseTo = (fraction: number) =>
     Math.floor(gameState.currentBet + potAfterCall * fraction);
   const visibleChat = chatMessages;
+  const sendCurrentChat = () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    onSendChat(text);
+    setChatInput('');
+  };
   const ownerName = room.players.find(p => p.id === room.hostId)?.name || 'HOST';
   // activeGameType: the game type currently in play (locked at hand start)
   // room.settings.gameType: what the NEXT hand will use (may differ if host changed mid-hand)
@@ -902,13 +939,16 @@ export default function GameTable({
     function updateScale() {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      const headerH = 44;
-      const availH = Math.max(320, h - headerH);
+      // Keep a small safety gutter so fixed-position controls don't clip.
+      const availW = Math.max(320, w - 16);
+      const availH = Math.max(320, h - 16);
 
-      // Baseline designed around ~1600x900 game viewport.
-      const scaleW = w / 1600;
-      const scaleH = availH / 860;
-      const next = Math.max(0.62, Math.min(1, Math.min(scaleW, scaleH)));
+      // Baseline viewport for the full table UI canvas.
+      const baseW = 1600;
+      const baseH = 900;
+      const scaleW = availW / baseW;
+      const scaleH = availH / baseH;
+      const next = Math.max(0.35, Math.min(1, Math.min(scaleW, scaleH)));
       setUiScale(next);
     }
 
@@ -1059,9 +1099,10 @@ export default function GameTable({
           </div>
         )}
         <div
-          className="absolute top-0 left-0 origin-top-left"
+          className="absolute top-0 left-1/2"
           style={{
-            transform: `scale(${uiScale})`,
+            transform: `translateX(-50%) scale(${uiScale})`,
+            transformOrigin: 'top center',
             width: `${100 / uiScale}%`,
             height: `${100 / uiScale}%`,
           }}
@@ -1999,43 +2040,95 @@ export default function GameTable({
         </div>
       </div>
 
-        <div className="absolute bottom-2 left-2 md:left-3 z-20 w-[330px] md:w-[470px]">
-	          <div className="rounded-lg border border-white/15 bg-black/35 p-2">
-	            <div className="text-xs text-white/60 mb-1">{t('table.log.title')}</div>
-	            <div className="space-y-1 h-[64px] overflow-y-auto pr-1">
-	              {visibleChat.length === 0 && <div className="text-xs text-white/45">{t('chat.none_short')}</div>}
-	              {visibleChat.map(msg => (
-	                <div key={msg.id} className="text-sm text-white/85 break-words">
-	                  <span className="text-emerald-300">{msg.playerName}: </span>{msg.message}
-	                </div>
-	              ))}
-	            </div>
-	            <div className="mt-2 flex gap-2">
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && chatInput.trim()) {
-                    onSendChat(chatInput.trim());
-                    setChatInput('');
-                  }
-                }}
-	                placeholder={t('chat.placeholder')}
-	                className="flex-1 bg-black/45 border border-white/20 rounded px-2 py-1 text-sm text-white placeholder:text-white/40 outline-none"
-	              />
+        {isMobileViewport ? (
+          <>
+            <div className="absolute bottom-2 left-2 z-20">
               <button
-                onClick={() => {
-                  if (!chatInput.trim()) return;
-                  onSendChat(chatInput.trim());
-                  setChatInput('');
-                }}
-	                className="px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-sm"
-	              >
-	                {t('chat.send')}
-	              </button>
-	            </div>
-	          </div>
-	        </div>
+                onClick={() => setShowMobileChat(true)}
+                className="relative rounded-lg border border-white/20 bg-black/55 px-3 py-2 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(0,0,0,0.4)]"
+              >
+                {t('table.mobile_chat.open')}
+                {mobileUnreadCount > 0 && (
+                  <span className="absolute -top-2 -right-2 min-w-[1.25rem] h-5 px-1 rounded-full bg-red-600 border border-red-200 text-[0.7rem] leading-5 text-white text-center font-extrabold">
+                    {mobileUnreadCount > 99 ? '99+' : mobileUnreadCount}
+                  </span>
+                )}
+              </button>
+            </div>
+            {showMobileChat && (
+              <div className="absolute inset-0 z-50 bg-black/65 p-3">
+                <div className="flex h-full flex-col rounded-xl border border-white/20 bg-[#121722]/95 p-3 text-white shadow-[0_20px_45px_rgba(0,0,0,0.5)]">
+                  <div className="mb-2 flex items-center justify-between">
+                    <div className="text-sm font-extrabold tracking-wide">{t('table.log.title')}</div>
+                    <button
+                      onClick={() => setShowMobileChat(false)}
+                      className="rounded bg-white/15 px-2.5 py-1 text-xs"
+                    >
+                      {t('common.close')}
+                    </button>
+                  </div>
+                  <div className="mb-2 text-xs text-white/60">{t('table.mobile_chat.hint')}</div>
+                  <div className="flex-1 space-y-1 overflow-y-auto rounded border border-white/10 bg-black/25 p-2 pr-1">
+                    {visibleChat.length === 0 && <div className="text-xs text-white/45">{t('chat.none_short')}</div>}
+                    {visibleChat.map(msg => (
+                      <div key={msg.id} className="text-sm text-white/85 break-words">
+                        <span className="text-emerald-300">{msg.playerName}: </span>{msg.message}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') sendCurrentChat();
+                      }}
+                      placeholder={t('chat.placeholder')}
+                      className="flex-1 rounded border border-white/20 bg-black/45 px-2 py-2 text-sm text-white placeholder:text-white/40 outline-none"
+                    />
+                    <button
+                      onClick={sendCurrentChat}
+                      className="rounded bg-white/20 px-3 py-2 text-sm"
+                    >
+                      {t('chat.send')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="absolute bottom-2 left-2 md:left-3 z-20 w-[330px] md:w-[470px]">
+            <div className="rounded-lg border border-white/15 bg-black/35 p-2">
+              <div className="text-xs text-white/60 mb-1">{t('table.log.title')}</div>
+              <div className="space-y-1 h-[64px] overflow-y-auto pr-1">
+                {visibleChat.length === 0 && <div className="text-xs text-white/45">{t('chat.none_short')}</div>}
+                {visibleChat.map(msg => (
+                  <div key={msg.id} className="text-sm text-white/85 break-words">
+                    <span className="text-emerald-300">{msg.playerName}: </span>{msg.message}
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') sendCurrentChat();
+                  }}
+                  placeholder={t('chat.placeholder')}
+                  className="flex-1 bg-black/45 border border-white/20 rounded px-2 py-1 text-sm text-white placeholder:text-white/40 outline-none"
+                />
+                <button
+                  onClick={sendCurrentChat}
+                  className="px-3 py-1 rounded bg-white/20 hover:bg-white/30 text-sm"
+                >
+                  {t('chat.send')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="absolute bottom-2 right-2 md:right-3 z-20 flex flex-col items-end gap-2 w-[560px] max-w-[calc(100vw-16px)]">
 	          {showRunItTwicePanel && (
