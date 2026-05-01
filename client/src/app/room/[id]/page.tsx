@@ -133,6 +133,7 @@ export default function RoomPage() {
   }
 
   function handleLeave() {
+    if (!confirm(t('table.leave_confirm'))) return;
     leaveRoom();
     router.push('/');
   }

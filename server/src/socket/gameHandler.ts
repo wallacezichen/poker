@@ -6,7 +6,7 @@ import { decideBotAction, getBotThinkTime } from '../game/botAI';
 import {
   createRoom, getRoom, updateRoomStatus, upsertPlayer,
   updatePlayerChips, updatePlayerConnection, getPlayers, removePlayer,
-  updateRoomSettings,
+  updateRoomSettings, updateRoomHost,
   saveGameState, loadGameState, saveHandHistory,
   saveChat, getChatHistory,
 } from '../db/supabase';
@@ -33,6 +33,8 @@ type PendingJoinRequest = { requestId: string; roomId: string; playerName: strin
 const pendingJoinRequestsByRoom = new Map<string, Map<string, PendingJoinRequest>>();
 const pendingRebuyPromptsByRoom = new Map<string, Set<string>>();
 const rebuyCountsByRoom = new Map<string, Map<string, number>>();
+// Keep immutable "original host" per room so host role can return after temporary transfer.
+const originalHostByRoom = new Map<string, string>();
 const RUN_IT_TWICE_VOTE_TIMEOUT_MS = 15000;
 
 const PLAYER_COLORS = [
@@ -158,6 +160,32 @@ function emitRebuyCountsToSocket(io: Server, socketId: string, roomId: string): 
   io.to(socketId).emit('game:rebuy_counts', { counts: getRebuyCountsSnapshot(roomId) });
 }
 
+async function maybeTransferHostOnExit(roomId: string, exitingPlayerId: string): Promise<void> {
+  const roomData = await getRoom(roomId);
+  if (!roomData) return;
+  if (!originalHostByRoom.has(roomId)) originalHostByRoom.set(roomId, roomData.host_id);
+  if (roomData.host_id !== exitingPlayerId) return;
+
+  const originalHostId = originalHostByRoom.get(roomId)!;
+  const players = await getPlayers(roomId);
+  const nextHost = players
+    .filter((p) => p.id !== originalHostId && p.id !== exitingPlayerId)
+    .sort((a, b) => a.seatIndex - b.seatIndex)[0];
+
+  if (!nextHost) return;
+  await updateRoomHost(roomId, nextHost.id);
+}
+
+async function maybeRestoreOriginalHost(roomId: string, playerId: string): Promise<void> {
+  const roomData = await getRoom(roomId);
+  if (!roomData) return;
+  if (!originalHostByRoom.has(roomId)) originalHostByRoom.set(roomId, roomData.host_id);
+  const originalHostId = originalHostByRoom.get(roomId)!;
+  if (playerId !== originalHostId) return;
+  if (roomData.host_id === originalHostId) return;
+  await updateRoomHost(roomId, originalHostId);
+}
+
 export function registerGameHandlers(
   io: Server<ClientToServerEvents, ServerToClientEvents>,
   socket: Socket<ClientToServerEvents, ServerToClientEvents>
@@ -174,6 +202,7 @@ export function registerGameHandlers(
       };
 
       await createRoom(roomId, playerId, roomSettings);
+      originalHostByRoom.set(roomId, playerId);
 
       const player: RoomPlayer = {
         id: playerId,
@@ -295,6 +324,52 @@ export function registerGameHandlers(
   });
 
   // ============================================================
+  // LEAVE ROOM
+  // ============================================================
+  socket.on('room:leave', async () => {
+    const session = socketToPlayer.get(socket.id);
+    if (!session) return;
+    const { roomId, playerId } = session;
+
+    socketToPlayer.delete(socket.id);
+    const sockets = roomSockets.get(roomId);
+    if (sockets) {
+      sockets.delete(playerId);
+      if (sockets.size === 0) {
+        roomSockets.delete(roomId);
+        awayPlayersByRoom.delete(roomId);
+        pausedRooms.delete(roomId);
+        pendingJoinRequestsByRoom.delete(roomId);
+        pendingRebuyPromptsByRoom.delete(roomId);
+        rebuyCountsByRoom.delete(roomId);
+        clearRunoutTimer(roomId);
+        clearRunItTwiceVoteTimer(roomId);
+        const revealTimer = streetRevealTimers.get(roomId);
+        if (revealTimer) {
+          clearTimeout(revealTimer);
+          streetRevealTimers.delete(roomId);
+        }
+      }
+    }
+    socket.leave(roomId);
+
+    await updatePlayerConnection(roomId, playerId, false);
+    await maybeTransferHostOnExit(roomId, playerId);
+    io.to(roomId).emit('player:disconnected', playerId);
+
+    const state = activeGames.get(roomId);
+    if (state) {
+      const inHand = state.players.find((p) => p.id === playerId);
+      if (inHand) inHand.isConnected = false;
+      saveGameState(state).catch(console.error);
+      broadcastGameState(io, roomId, state);
+    }
+
+    const room = await getFullRoom(roomId);
+    if (room) io.to(roomId).emit('room:updated', room);
+  });
+
+  // ============================================================
   // RESUME ROOM (same browser/session)
   // ============================================================
   socket.on('room:resume', async ({ roomId, playerId }, cb) => {
@@ -321,6 +396,7 @@ export function registerGameHandlers(
       roomSockets.get(roomIdUp)!.set(playerId, socket.id);
 
       await updatePlayerConnection(roomIdUp, playerId, true);
+      await maybeRestoreOriginalHost(roomIdUp, playerId);
 
       const room = await getFullRoom(roomIdUp);
       let gameState = activeGames.get(roomIdUp);
@@ -1041,6 +1117,7 @@ export function registerGameHandlers(
     }
 
     await updatePlayerConnection(roomId, playerId, false);
+    await maybeTransferHostOnExit(roomId, playerId);
     io.to(roomId).emit('player:disconnected', playerId);
 
     const state = activeGames.get(roomId);
@@ -1357,6 +1434,11 @@ function startDelayedRunout(
     const current = activeGames.get(roomId);
     if (!current) return;
     if (!shouldAutoRunout(current)) return;
+    // Offer run-it-twice before auto-dealing the next street.
+    // This is critical for bomb-pot forced all-ins that begin on flop:
+    // if we deal to turn first, the offer base street becomes turn and
+    // run2 can appear to only reveal a single river card.
+    if (maybeStartRunItTwiceOffer(io, roomId, current)) return;
 
     // advanceRunoutStreet mutates state in-place; compute next from a snapshot so we can render suspense.
     const beforeStage = current.stage;

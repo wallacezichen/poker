@@ -186,6 +186,17 @@ export default function GameTable({
   useEffect(() => {
     if (showMobileChat || !isMobileViewport) setMobileUnreadCount(0);
   }, [showMobileChat, isMobileViewport]);
+  useEffect(() => {
+    if (!isMobileViewport && desktopLogScrollRef.current) {
+      const el = desktopLogScrollRef.current;
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
+    if (isMobileViewport && showMobileChat && mobileLogScrollRef.current) {
+      const el = mobileLogScrollRef.current;
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [chatMessages.length, isMobileViewport, showMobileChat]);
   const [showRaisePanel, setShowRaisePanel] = useState(false);
   const [uiScale, setUiScale] = useState(1);
   const [showRulesModal, setShowRulesModal] = useState(false);
@@ -250,6 +261,8 @@ export default function GameTable({
   const squidGameAnimTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const squidGameAnimHandRef = useRef<number>(0);
   const prevChatLenRef = useRef<number>(chatMessages.length);
+  const desktopLogScrollRef = useRef<HTMLDivElement | null>(null);
+  const mobileLogScrollRef = useRef<HTMLDivElement | null>(null);
   const optimisticBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentActionBetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const throwSeatRefs = useRef(new Map<string, HTMLDivElement | null>());
@@ -455,6 +468,7 @@ export default function GameTable({
     });
   const twoSevenBonus = gameState.twoSevenBonus;
   const twoSevenCollected = twoSevenBonus?.collectedFrom || [];
+  const twoSevenCollectedAmountById = new Map(twoSevenCollected.map((x) => [x.playerId, Number(x.amount || 0)]));
   const twoSevenCurrentCollectEntry =
     twoSevenAnimRunning && twoSevenAnimPhase === 'collect'
       ? twoSevenCollected[Math.min(twoSevenAnimStep, Math.max(0, twoSevenCollected.length - 1))]
@@ -2008,16 +2022,10 @@ export default function GameTable({
                             : undefined
                     }
                     bonusBubbleActive={
-                      twoSevenAnimRunning &&
-                      twoSevenAnimPhase === 'collect' &&
-                      roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
+                      twoSevenCollectedAmountById.has(roomPlayer.id)
                     }
                     bonusBubbleAmount={
-                      twoSevenAnimRunning &&
-                      twoSevenAnimPhase === 'collect' &&
-                      roomPlayer.id === twoSevenCurrentCollectEntry?.playerId
-                        ? Number(twoSevenCurrentCollectEntry?.amount || 0)
-                        : undefined
+                      twoSevenCollectedAmountById.get(roomPlayer.id)
                     }
                     squidBubbleVariant={
                       squidGamePenalty?.payerId === roomPlayer.id
@@ -2068,7 +2076,7 @@ export default function GameTable({
                     </button>
                   </div>
                   <div className="mb-2 text-xs text-white/60">{t('table.mobile_chat.hint')}</div>
-                  <div className="flex-1 space-y-1 overflow-y-auto rounded border border-white/10 bg-black/25 p-2 pr-1">
+                  <div ref={mobileLogScrollRef} className="flex-1 space-y-1 overflow-y-auto rounded border border-white/10 bg-black/25 p-2 pr-1">
                     {visibleChat.length === 0 && <div className="text-xs text-white/45">{t('chat.none_short')}</div>}
                     {visibleChat.map(msg => (
                       <div key={msg.id} className="text-sm text-white/85 break-words">
@@ -2101,7 +2109,7 @@ export default function GameTable({
           <div className="absolute bottom-2 left-2 md:left-3 z-20 w-[330px] md:w-[470px]">
             <div className="rounded-lg border border-white/15 bg-black/35 p-2">
               <div className="text-xs text-white/60 mb-1">{t('table.log.title')}</div>
-              <div className="space-y-1 h-[64px] overflow-y-auto pr-1">
+              <div ref={desktopLogScrollRef} className="space-y-1 h-[64px] overflow-y-auto pr-1">
                 {visibleChat.length === 0 && <div className="text-xs text-white/45">{t('chat.none_short')}</div>}
                 {visibleChat.map(msg => (
                   <div key={msg.id} className="text-sm text-white/85 break-words">

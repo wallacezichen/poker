@@ -79,7 +79,9 @@ export default function PlayerSeat({
   } else {
     displayCards = new Array(expectedHoleCount).fill(undefined);
   }
-  const liveBest = (isMe && !hideLiveHandLabel) ? evaluateBestHandName([...player.holeCards, ...communityCards], gameType) : '';
+  const liveBest = (isMe && !hideLiveHandLabel)
+    ? evaluateBestHandName(player.holeCards || [], communityCards, gameType)
+    : '';
   const handLabel = player.handResult ? formatHandLabelEnDetailed(player.handResult) : liveBest;
   // Crazy Pineapple hard-disables "Run it twice", so ignore any stale labels.
   const runItTwiceLabels = gameType === 'crazy_pineapple' ? undefined : player.runItTwiceHandNamesZh;
@@ -280,7 +282,20 @@ function formatHandLabelEnDetailed(result: NonNullable<PlayerState['handResult']
   return `${valueToRank(hi)}-high`;
 }
 
-function evaluateBestHandName(cards: CardType[], gameType: GameType): string {
+function evaluateBestHandName(holeCards: CardType[], communityCards: CardType[], gameType: GameType): string {
+  if (gameType === 'omaha') {
+    if (holeCards.length < 2 || communityCards.length < 3) return '';
+    let bestRank = -1;
+    for (const hole of combinations(holeCards, 2)) {
+      for (const board of combinations(communityCards, 3)) {
+        const r = evaluate5Rank([...hole, ...board], 'regular');
+        if (r > bestRank) bestRank = r;
+      }
+    }
+    return HAND_NAMES_REGULAR[bestRank] || '';
+  }
+
+  const cards = [...holeCards, ...communityCards];
   if (cards.length < 5) return '';
   let bestRank = -1;
   for (const combo of combinations(cards, 5)) {

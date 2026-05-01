@@ -227,15 +227,6 @@ function evaluatePlayerHandForVariant(player: PlayerState, board: Card[], gameTy
       if (!best || compareHands(candidate, best) > 0) {
         best = candidate;
         bestCards = candidateCards;
-      } else if (best && compareHands(candidate, best) === 0) {
-        const seen = new Set(bestCards.map(c => `${c.rank}${c.suit}`));
-        for (const c of candidateCards) {
-          const key = `${c.rank}${c.suit}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            bestCards.push(c);
-          }
-        }
       }
     }
   }

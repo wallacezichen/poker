@@ -63,6 +63,17 @@ export async function updateRoomSettings(
   if (error) throw new Error(`Failed to update room settings: ${error.message}`);
 }
 
+export async function updateRoomHost(
+  roomId: string,
+  hostId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('rooms')
+    .update({ host_id: hostId })
+    .eq('id', roomId);
+  if (error) throw new Error(`Failed to update room host: ${error.message}`);
+}
+
 // ============================================================
 // Player Operations
 // ============================================================
